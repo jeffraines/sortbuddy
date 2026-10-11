@@ -23,6 +23,7 @@ import cv2
 import numpy as np
 
 from . import lookup, ocr
+from .proposal import propose
 from .camera import Camera, open_camera, overlay, show
 from .catalog import Card, Catalog, _coerce
 from .demo import make_demo
@@ -121,7 +122,7 @@ def build_index(catalog_path: str, detect: bool = False) -> FingerprintIndex:
     index = FingerprintIndex.from_images(images)
     out = _index_path(catalog_path)
     index.save(out)
-    print(f"Indexed {len(index)} cards -> {out}")
+    print(f"Indexed {len(index)} cards ({out.name})")
     if missing:
         print(f"{len(missing)} cards have no readable image (e.g. {', '.join(missing[:5])})")
     return index
@@ -152,20 +153,7 @@ def _next_auto_id(catalog: Catalog) -> str:
     return f"card-{n:03d}"
 
 
-def _lookup(source, name: str, set_code, number):
-    """Returns (fields, status line, status color)."""
-    if source is None:
-        return None, "", None
-    try:
-        found = source(name, set_code, number)
-    except lookup.LookupError_ as e:
-        return None, f"Lookup failed: {e}", (60, 60, 230)
-    if not found:
-        return None, "Not found in the card database", (0, 200, 255)
-    fields, confirmed = found
-    if confirmed:
-        return fields, f"Found: {fields.get('set_name', fields['set'])} #{fields['number']}", (80, 220, 80)
-    return fields, "Found by name only: check the set/number", (0, 200, 255)
+KIND_COLORS = {"ok": (80, 220, 80), "warn": (0, 200, 255), "error": (60, 60, 230)}
 
 
 def _confirm(catalog: Catalog, card_img, text, auto_id: str, source=None):
@@ -176,37 +164,13 @@ def _confirm(catalog: Catalog, card_img, text, auto_id: str, source=None):
     details come from the card database.
     """
     names = (text.names if text else []) or [""]
-    set_code = text.set_code if text else None
-    number = text.number if text else None
-    looked_up: dict[str, tuple] = {}
+    cache: dict = {}
     i = 0
     typed_id = None
     while True:
-        name = names[i]
-        if name not in looked_up:
-            looked_up[name] = _lookup(source, name, set_code, number) if (name or set_code) else (None, "", None)
-        info, status, status_color = looked_up[name]
-        if info:
-            fields = dict(info)
-            card_id = lookup.card_id(info)
-        else:
-            fields = {"name": name}
-            if set_code:
-                fields["set"] = set_code
-            if number is not None:
-                fields["number"] = number
-            if set_code and number is not None:
-                card_id = f"{set_code}-{number:03d}"
-            elif name:
-                card_id = re.sub(r"[^A-Za-z0-9]+", "-", name).strip("-").lower() or auto_id
-            else:
-                card_id = auto_id
-        card_id = typed_id or card_id
-        foil = text.foil if text else None
-        if foil is not None:
-            fields["foil"] = "yes" if foil else "no"
-            if foil and "price_foil" in fields:
-                fields["price"] = fields["price_foil"]  # price of the copy in hand
+        prop = propose(text, names[i], auto_id, source, cache)
+        fields, info = prop.fields, prop.fields if prop.found else None
+        card_id = typed_id or prop.card_id
 
         h = 640
         img = cv2.resize(card_img, (int(card_img.shape[1] * h / card_img.shape[0]), h))
@@ -214,18 +178,18 @@ def _confirm(catalog: Catalog, card_img, text, auto_id: str, source=None):
         white, grey = (255, 255, 255), (200, 200, 200)
         rows = [("Name:  " + (fields.get("name") or "(none read)"), white),
                 ("Id:    " + card_id, white)]
-        if status:
-            rows.append((status, status_color))
+        if prop.message:
+            rows.append((prop.message, KIND_COLORS.get(prop.kind, grey)))
         if info:
             colors = "/".join(info.get("colors", []))
             price = f"${fields['price']}" if "price" in fields else ""
             rows.append((f"{info.get('mana_cost', '')}  cost {info.get('cost', '')}  {colors}  {info.get('rarity', '')}  {price}", grey))
             rows.append((info.get("type", "")[:42], grey))
-        if foil is not None:
-            rows.append(("Foil (star on bottom line)" if foil else "Non-foil (dot on bottom line)",
-                         (0, 215, 255) if foil else grey))
         else:
-            rows.append(("Set: " + str(set_code or "-") + "    #: " + str(number if number is not None else "-"), grey))
+            rows.append(("Set: " + str(fields.get("set", "-")) + "    #: " + str(fields.get("number", "-")), grey))
+        if prop.foil is not None:
+            rows.append(("Foil (star on bottom line)" if prop.foil else "Non-foil (dot on bottom line)",
+                         (0, 215, 255) if prop.foil else grey))
         rows += [("", None),
                  ("ENTER  save", (80, 220, 80)),
                  (f"TAB    next guess for name ({i + 1}/{len(names)})", grey),
@@ -251,7 +215,7 @@ def _confirm(catalog: Catalog, card_img, text, auto_id: str, source=None):
         if key == ord("e"):
             print("(Leave blank to keep what's in brackets.)")
             new_name = (ask(f"Name [{fields.get('name', '')}]: ") or "").strip()
-            if new_name and new_name != name:
+            if new_name and new_name != names[i]:
                 # Look the typed name up too; the next pass shows the result.
                 names.insert(i + 1, new_name)
                 i += 1

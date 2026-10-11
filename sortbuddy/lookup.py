@@ -4,8 +4,12 @@ Only used while enrolling on a computer; the sorter itself never needs the
 internet. Each source takes what OCR read (name, set code, number) and
 returns catalog fields, or None if it can't find the card.
 
-Currently: Magic: The Gathering via Scryfall (https://scryfall.com/docs/api),
-free to use with a descriptive User-Agent and modest request rates.
+Currently:
+- Magic: The Gathering via Scryfall (https://scryfall.com/docs/api), free to
+  use with a descriptive User-Agent and modest request rates.
+- Riftbound via Riftcodex (https://api.riftcodex.com/docs), a community card
+  database. Found by set + collector number, so it works for any language
+  printing (a Korean card's OGN 114 is the same card as the English one).
 """
 
 from __future__ import annotations
@@ -25,7 +29,7 @@ class LookupError_(RuntimeError):
     """The database couldn't be reached (offline, timeout...)."""
 
 
-def _get(url: str) -> dict | None:
+def _get(url: str, site: str = "Scryfall") -> dict | list | None:
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=8) as resp:
@@ -33,14 +37,16 @@ def _get(url: str) -> dict | None:
     except urllib.error.HTTPError as e:
         if e.code == 404:
             return None
-        raise LookupError_(f"Scryfall error {e.code}") from e
+        raise LookupError_(f"{site} error {e.code}") from e
     except (urllib.error.URLError, TimeoutError) as e:
-        raise LookupError_(f"can't reach Scryfall ({e})") from e
+        raise LookupError_(f"can't reach {site} ({e})") from e
     finally:
         time.sleep(0.1)  # Scryfall asks for 50-100 ms between requests
 
 
 def _same_name(a: str, b: str) -> bool:
+    if not b.isascii():
+        return True  # OCR read a non-English printing; can't compare names
     def norm(s):
         return re.sub(r"[^a-z0-9]", "", s.lower())
     # Double-faced cards are named "Front // Back"; OCR sees the front.
@@ -112,8 +118,75 @@ def scryfall(name: str, set_code: str | None = None, number: int | None = None) 
     return (_fields(card), False) if card else None
 
 
+RIFTCODEX = "https://api.riftcodex.com"
+_set_cache: dict[str, list] = {}
+
+
+def _riftcodex_set(set_code: str) -> list:
+    """Every card in a Riftbound set (cached; a set is ~4 requests)."""
+    key = set_code.upper()
+    if key not in _set_cache:
+        cards, page = [], 1
+        while True:
+            data = _get(f"{RIFTCODEX}/cards?set_id={urllib.parse.quote(key)}&size=100&page={page}", "Riftcodex")
+            if not data:
+                break
+            cards += data.get("items", [])
+            if page >= data.get("pages", 1):
+                break
+            page += 1
+        _set_cache[key] = cards
+    return _set_cache[key]
+
+
+def _riftcodex_fields(card: dict) -> dict:
+    attrs = card.get("attributes") or {}
+    cls = card.get("classification") or {}
+    text = card.get("text") or {}
+    st = card.get("set") or {}
+    meta = card.get("metadata") or {}
+    fields = {
+        "name": card.get("name", ""),
+        "set": st.get("set_id", "").upper(),
+        "set_name": st.get("label", ""),
+        "number": card.get("collector_number"),
+        "rarity": (cls.get("rarity") or "").lower(),
+        "domain": [d.lower() for d in cls.get("domain") or []],
+        "type": cls.get("type", ""),
+        "supertype": cls.get("supertype"),
+        "cost": attrs.get("energy"),     # energy cost
+        "energy": attrs.get("energy"),
+        "power": attrs.get("power"),     # power (rune) cost
+        "might": attrs.get("might"),
+        "text": (text.get("plain") or "").replace("\n", " / "),
+        "artist": (card.get("media") or {}).get("artist", ""),
+        "tags": card.get("tags") or [],
+        "variant": ", ".join(k for k in ("alternate_art", "overnumbered", "signature") if meta.get(k)),
+    }
+    return {k: v for k, v in fields.items() if v not in (None, "", [])}
+
+
+def riftcodex(name: str, set_code: str | None = None, number: int | None = None) -> tuple[dict, bool] | None:
+    """Returns (fields, printing_confirmed), like scryfall()."""
+    if set_code and number is not None:
+        same = [c for c in _riftcodex_set(set_code) if c.get("collector_number") == number]
+        if same:
+            # The plain printing first; alternate art / signature share the number.
+            same.sort(key=lambda c: sum(bool((c.get("metadata") or {}).get(k))
+                                        for k in ("alternate_art", "overnumbered", "signature")))
+            if not name or any(_same_name(c["name"], name) for c in same):
+                match = next((c for c in same if not name or _same_name(c["name"], name)), same[0])
+                return _riftcodex_fields(match), True
+    if not name or not name.isascii():
+        return None
+    data = _get(f"{RIFTCODEX}/cards/name?fuzzy={urllib.parse.quote(name)}&size=5", "Riftcodex")
+    items = (data or {}).get("items", []) if isinstance(data, dict) else data or []
+    return (_riftcodex_fields(items[0]), False) if items else None
+
+
 SOURCES = {
     "mtg": ("Magic: The Gathering (Scryfall)", scryfall),
+    "riftbound": ("Riftbound (Riftcodex)", riftcodex),
 }
 
 

@@ -54,9 +54,13 @@ grouped by domain with cost in order within each group.
 that it opens the SortBuddy window directly, no terminal needed. Right-click
 it → *Send to → Desktop (create shortcut)* to keep it handy.
 
-In the window: pick or create a card list, set the camera number
-(*Find cameras* lists them), click **Add cards…**, then type a sort rule
-and click **Start sorting**.
+Everything happens in one window: settings on the left, the live camera in
+the middle, and on the right either the information read from the card
+you just captured or a big YES / NO while sorting. Pick the card list and
+camera (*Find cameras* lists them), choose where card details come from
+(Magic or Riftbound), click **Start adding cards**, then type a sort rule
+and click **Start sorting**. Keys: Space capture, Enter save, Tab next name
+guess, Esc discard, [ ] focus, U undo, F11 full screen.
 
 The same things from a terminal:
 
@@ -125,6 +129,21 @@ Tips for the webcam:
 - Fill a decent part of the frame with the card. Fingers on the edge are fine.
 - Enroll and scan with the same camera and lighting. Matching works best
   when reference photos look like what it sees while sorting.
+
+## Riftbound cards: details filled in automatically
+
+Choose **Card details from: Riftbound (Riftcodex)** (or `--lookup riftbound`).
+The card is found by the set and number on its bottom line (`OGN · 114/298`),
+so it works for any printing language: a Korean card is looked up as the
+same card as the English one. Saved fields: `name`, `set`, `set_name`,
+`number`, `rarity`, `domain`, `type`, `supertype`, `energy` (also as
+`cost`), `power`, `might`, `text`, `artist`, `tags`, and `variant` for
+alternate art / signature / overnumbered printings. Rule examples:
+`domain has mind`, `cost >= 5`, `type == unit`, `rarity in rare,epic`.
+
+Data comes from [Riftcodex](https://api.riftcodex.com/docs), a community
+Riftbound card database. SortBuddy downloads a set's card list the first
+time it needs it (a few requests) and keeps it in memory while enrolling.
 
 ## Magic cards: details filled in automatically
 

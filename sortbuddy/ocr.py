@@ -37,6 +37,7 @@ class CardText:
     names: list[str] = field(default_factory=list)  # best guess first
     set_code: str | None = None
     number: int | None = None
+    extra: dict = field(default_factory=dict)  # type line, power/toughness, artist, rules text
     foil: bool | None = None  # from the Magic bottom line: "LCI ★ EN" foil, "FRA • EN" not; None = can't tell
     lines: list[Line] = field(default_factory=list)
     upright: np.ndarray | None = None  # the card image turned the right way up
@@ -101,7 +102,7 @@ _NUMBER = re.compile(r"(?:^|\s|(?<=[A-Z]))(\d{2,4})(?=\s|$)")
 # set codes are printed in capitals, sentence words like "They" aren't.
 # (OCR often drops the space before the number: "OGN029/298")
 _SET = re.compile(r"(?<![A-Za-z0-9])([A-Z][A-Z0-9]{2,3})(?![A-Za-z])")
-_LANGUAGE = re.compile(r"(?<![A-Z])(EN|JP|JA|DE|FR|ES|IT|PT|KO|ZH|RU|CN)(?![A-Z])")
+_LANGUAGE = re.compile(r"(?<![A-Z])(EN|JP|JA|DE|FR|ES|IT|PT|KO|KR|ZH|RU|CN)(?![A-Z])")
 _NOT_SETS = {"THE", "AND", "LLC", "INC", "TM"}
 
 
@@ -145,7 +146,7 @@ def _collector(lines: list[Line], card_h: int, card_w: int) -> tuple[str | None,
                 code = code[0] + code[1:].replace("0", "O")  # OCR reads O as zero
             if code in _NOT_SETS or _LANGUAGE.fullmatch(code):
                 continue
-            next_to_lang = bool(re.match(r"\W{0,3}(EN|JP|JA|DE|FR|ES|IT|PT|KO|ZH|RU|CN)(?![A-Z])", text[m.end():].lstrip()))
+            next_to_lang = bool(re.match(r"\W{0,3}(EN|JP|JA|DE|FR|ES|IT|PT|KO|KR|ZH|RU|CN)(?![A-Z])", text[m.end():].lstrip()))
             score = (1 + 3 * has_lang + 3 * next_to_lang + (len(code) == 3)
                      + 2 * bool(re.search(r"\d{2,}", text)) - 2 * (words >= 3))
             if score > best_score:
@@ -165,6 +166,40 @@ def _foil(lines: list[Line], card_h: int, card_w: int) -> bool | None:
             if re.search(r"[A-Z0-9]\s*[•·.∙]\s*$", between):
                 return False
     return None
+
+
+# Magic's rarity letter before the collector number: "C 0029"
+_RARITY = {"C": "common", "U": "uncommon", "R": "rare", "M": "mythic", "L": "land",
+           "T": "token", "S": "special", "P": "promo"}
+
+
+def _details(lines: list[Line], card_h: int, card_w: int) -> dict:
+    """What can be read straight off the card without a database: the type
+    line, power/toughness, artist and rules text. The mana cost is symbols,
+    not text, so it needs the lookup."""
+    out = {}
+    for ln in sorted(lines, key=lambda ln: ln.y0):
+        t = ln.text.strip()
+        mid = 0.45 * card_h < ln.y0 < 0.7 * card_h
+        if "type" not in out and mid and re.search(r"\s[—–-]\s?|[A-Za-z][—–]", t) and sum(c.isalpha() for c in t) >= 5:
+            out["type"] = re.sub(r"\s*[—–-]\s*", " — ", _respace(t), count=1)
+        m = re.fullmatch(r"(\d{1,2}|\*)\s*/\s*(\d{1,2}|\*)", t)
+        if m and ln.x0 > 0.6 * card_w and ln.y0 > 0.75 * card_h:
+            out["power"], out["toughness"] = (int(g) if g.isdigit() else g for g in m.groups())
+        r = re.match(r"([CURMLTSP])\s?\d{2,4}\b", t)
+        if r and ln.y0 > 0.85 * card_h and ln.x0 < 0.5 * card_w:
+            out["rarity"] = _RARITY[r.group(1)]
+        if ln.y0 > 0.85 * card_h and ln.x0 < 0.5 * card_w and _LANGUAGE.search(t):
+            artist = _LANGUAGE.split(t, maxsplit=1)[-1]
+            artist = re.sub(r"^[^A-Za-z]+", "", artist).strip()
+            if len(artist) >= 4:
+                out["artist"] = artist.title()
+    body = [ln.text for ln in sorted(lines, key=lambda ln: ln.y0)
+            if 0.57 * card_h < ln.y0 < 0.85 * card_h and ln.x0 < 0.5 * card_w
+            and (_is_prose(ln.text) or ln.text.istitle())]
+    if body and "type" in out:
+        out["text"] = " / ".join(body)
+    return out
 
 
 def _respace(text: str) -> str:
@@ -203,4 +238,5 @@ def read_card(card: np.ndarray) -> CardText:
             best, best_score, best_img = lines, score, img
     h, w = best_img.shape[:2]
     set_code, number = _collector(best, h, w)
-    return CardText(_name_candidates(best, h), set_code, number, _foil(best, h, w), best, best_img)
+    return CardText(_name_candidates(best, h), set_code, number, _details(best, h, w), _foil(best, h, w),
+                    best, best_img)
