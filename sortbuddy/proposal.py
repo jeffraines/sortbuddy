@@ -71,6 +71,7 @@ def propose(text, name: str, auto_id: str, source=None, cache: dict | None = Non
         else:
             card_id = slug(name) or auto_id
 
+    fields["face"] = "front"
     if text and text.extra.get("language"):
         fields["language"] = text.extra["language"]
     if text and text.local_names:

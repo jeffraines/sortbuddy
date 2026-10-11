@@ -48,6 +48,16 @@ def phash(card: np.ndarray) -> np.ndarray:
     return np.packbits(bits)
 
 
+def sharpness(card: np.ndarray) -> float:
+    """How in-focus a flattened card is: variance of the Laplacian over the
+    bottom part (small text, so it's the most focus-sensitive). Higher is
+    sharper; only meaningful compared between frames of the same setup."""
+    h = card.shape[0]
+    region = card[int(0.55 * h):]
+    gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY) if region.ndim == 3 else region
+    return float(cv2.Laplacian(gray, cv2.CV_64F).var())
+
+
 def hamming(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     """Bit distance between one hash `a` and one or many hashes `b`."""
     return np.unpackbits(np.bitwise_xor(a, b), axis=-1).sum(axis=-1)
@@ -61,7 +71,9 @@ class Match:
     flipped: bool  # card was upside down
 
     def confident(self, max_distance: int, min_margin: int) -> bool:
-        return self.distance <= max_distance and self.margin >= min_margin
+        # A slightly looser match is fine when it's far closer than anything else.
+        return ((self.distance <= max_distance and self.margin >= min_margin)
+                or (self.distance <= max_distance + 15 and self.margin >= 40))
 
 
 class FingerprintIndex:
@@ -80,14 +92,17 @@ class FingerprintIndex:
         hashes = np.stack([phash(images[i]) for i in ids]) if ids else np.zeros((0, HASH_BYTES), np.uint8)
         return cls(ids, hashes)
 
-    def add(self, card_id: str, card: np.ndarray) -> None:
-        """Learn one more card (or replace its fingerprint)."""
-        h = phash(card)[None, :]
-        if card_id in self.ids:
-            self.hashes[self.ids.index(card_id)] = h
-        else:
-            self.ids.append(card_id)
-            self.hashes = np.vstack([self.hashes, h])
+    def add(self, card_id: str, card: np.ndarray, keep: int = 5) -> None:
+        """Learn another reference photo of a card. Several photos per card
+        (different light, focus, angle) make recognition more robust; only
+        the newest `keep` are kept."""
+        rows = [i for i, x in enumerate(self.ids) if x == card_id]
+        if len(rows) >= keep:
+            drop = rows[0]
+            del self.ids[drop]
+            self.hashes = np.delete(self.hashes, drop, axis=0)
+        self.ids.append(card_id)
+        self.hashes = np.vstack([self.hashes, phash(card)[None, :]])
 
     def save(self, path: str | Path) -> None:
         np.savez_compressed(path, ids=np.array(self.ids), hashes=self.hashes)
@@ -98,16 +113,21 @@ class FingerprintIndex:
         return cls([str(i) for i in data["ids"]], data["hashes"])
 
     def match(self, card: np.ndarray) -> Match | None:
-        """Best match for a flattened card, trying both orientations."""
+        """Best match for a flattened card, trying both orientations. The
+        margin is measured against the closest *other* card, so several
+        photos of the same card don't count against each other."""
         if len(self) == 0:
             return None
+        ids = np.array(self.ids)
         best: Match | None = None
         for flipped, img in ((False, card), (True, cv2.rotate(card, cv2.ROTATE_180))):
             d = hamming(phash(img), self.hashes)
-            order = np.argsort(d)
-            first = int(d[order[0]])
-            second = int(d[order[1]]) if len(order) > 1 else HASH_BYTES * 8
-            m = Match(self.ids[order[0]], first, second - first, flipped)
+            i = int(np.argmin(d))
+            others = d[ids != ids[i]]
+            # Nothing else to compare with: measure against how far apart
+            # unrelated cards typically are (about half the bits).
+            second = int(others.min()) if others.size else HASH_BYTES * 4
+            m = Match(self.ids[i], int(d[i]), second - int(d[i]), flipped)
             if best is None or m.distance < best.distance:
                 best = m
         return best

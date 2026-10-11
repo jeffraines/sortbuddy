@@ -153,6 +153,44 @@ The app warns before sorting if a rule names a field no card has (e.g.
 Korean names (`name_kr`) are only read in **Add cards** mode; sorting skips
 them for speed.
 
+### Picking the rule
+
+No typing needed: in the panel on the right (camera off), pick a field and
+how to match it, e.g. **Rarity** *is any of* Rare, Epic; **Cost** *at most* 3;
+**Color** *is any of* Blue. Add more conditions with **+ Add condition**
+(all must match). It shows the rule in plain English and how many cards in
+your list would go to YES. Fields include **Game** (Magic / Riftbound) and
+**Face up or down**. Riftbound domains are also saved as colors (Mind =
+blue, Fury = red, Calm = green, Body = orange, Chaos = purple, Order =
+yellow), so one Color rule works for both games; **Domain** is offered when
+"Card details from" is set to Riftbound.
+
+### Card backs, face up / face down, sorting by game
+
+While sorting, put a card face down under the camera and click **This is a
+card back…**, then pick its game. From then on that back is recognised
+instantly from its picture (teach it a couple of times for reliability). Its
+`face` is `back` and `game` is the game, so **Face up or down** splits a pile
+into face up / face down, and **Game** separates a mixed box whichever way up
+the cards are. Card backs are left out of inventory exports.
+
+### Camera
+
+The sidebar has the picture size, focus (Auto, or a slider; the C920 moves in
+steps of 5), live frames per second and a sharpness reading for the card in
+view. **Find best focus** tries focus settings with a card under the camera
+and keeps the sharpest. If fps is low at 1920 × 1080, try 1280 × 720.
+
+### Mistakes it guards against
+
+- Two cards in view or overlapping: "One card at a time", nothing decided.
+- Nudging a card doesn't decide it again; it only counts again once it's
+  clearly a different card or was taken away (another copy).
+- Picture matches that aren't close are checked against the bottom line.
+  Cards keep up to 5 reference photos, added as they're identified.
+- A card found only by name must match the name closely, and a Magic set
+  code never leads to a Riftbound card (or vice versa); otherwise it's a "?".
+
 ## Riftbound cards: details filled in automatically
 
 Choose **Card details from: Riftbound (Riftcodex)** (or `--lookup riftbound`).

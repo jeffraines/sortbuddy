@@ -27,29 +27,28 @@ import numpy as np
 from . import cli, lookup, ocr
 from .camera import Camera
 from .catalog import Card, Catalog
-from .fingerprint import FingerprintIndex, hamming, phash
+from .fingerprint import FingerprintIndex, hamming, phash, sharpness
 from .identify import Identifier
 from .proposal import propose
 from .rules import Rule, RuleError
+from .gui_rules import RuleBuilder
 from .session import Session
-from .vision import extract_card
+from .theme import ACCENT, AMBER, BG, DIM, FAINT, FG, FONT, GREEN, LINE, PANEL, RED, SIDE
+from .vision import extract_card_checked
 
 SETTINGS = Path.home() / ".sortbuddy-gui.json"
 # Fields card lookups and OCR fill in, so rules can be checked before any card is known.
 KNOWN_FIELDS = {"id", "name", "set", "set_name", "number", "rarity", "cost", "mana_cost", "colors",
                 "color_identity", "type", "card_types", "subtypes", "power", "toughness", "keywords", "text",
                 "artist", "year", "price", "price_foil", "foil", "language", "domain", "supertype", "energy",
-                "might", "tags", "variant", "name_kr"}
+                "might", "tags", "variant", "name_kr", "game", "face"}
 NO_LOOKUP = "Off (fill in details yourself)"
+RESOLUTIONS = ["1920 × 1080", "1280 × 720", "640 × 480"]
 DEFAULTS = {"catalog": str(Path("mycards") / "catalog.csv"), "camera": 0, "focus": "",
             "rule": "cost <= 3", "lookup": "auto", "version": 2}
 
-# Colors
-BG, SIDE, PANEL, LINE = "#121419", "#1a1d24", "#20242d", "#2c313c"
-FG, DIM, FAINT = "#e9eaee", "#9aa0ae", "#5d6371"
-ACCENT, GREEN, RED, AMBER = "#4f8cff", "#3ecf6e", "#ef5b5b", "#f5b942"
 KIND_COLORS = {"ok": GREEN, "warn": AMBER, "error": RED, "": DIM}
-FONT = "Segoe UI" if sys.platform == "win32" else "DejaVu Sans"
+SAME_CARD = 85  # picture difference (bits of 256) still counted as the same card being moved
 
 # What the details panel shows, roughly in the order the parts appear on a
 # card. Rows without a value for the current card are hidden, so Magic and
@@ -92,7 +91,7 @@ def to_photo(frame: np.ndarray, max_w: int, max_h: int) -> tk.PhotoImage:
         scale = 1.0
     if abs(scale - 1.0) > 0.01:
         frame = cv2.resize(frame, (max(1, int(w * scale)), max(1, int(h * scale))),
-                           interpolation=cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR)
+                           interpolation=cv2.INTER_LINEAR)
     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     h, w = rgb.shape[:2]
     return tk.PhotoImage(data=f"P6 {w} {h} 255 ".encode() + rgb.tobytes(), format="PPM")
@@ -138,7 +137,7 @@ class App:
         root.bind_all("<Tab>", self.on_key)  # Tk's own Tab binding would win over <KeyPress>
         self._no_button_focus(root)
         root.protocol("WM_DELETE_WINDOW", self.quit)
-        self.catalog_var.trace_add("write", lambda *_: self.refresh_count())
+        self.catalog_var.trace_add("write", lambda *_: (self.refresh_count(), self.builder.refresh()))
         self.refresh_count()
         self.show_panel("idle")
         root.after(50, self.poll)
@@ -209,17 +208,43 @@ class App:
         ttk.Button(row, text="Find cameras", command=self.find_cameras).pack(side="left", padx=6)
         row = ttk.Frame(side)
         row.grid(sticky="ew", pady=(6, 0))
+        ttk.Label(row, text="Picture").pack(side="left")
+        self.res_var = tk.StringVar(value=self.settings.get("resolution", RESOLUTIONS[0]))
+        ttk.Combobox(row, textvariable=self.res_var, values=RESOLUTIONS, state="readonly", width=12).pack(
+            side="left", padx=6)
+        ttk.Label(row, text="(applies on start)", style="Dim.TLabel").pack(side="left")
+
+        row = ttk.Frame(side)
+        row.grid(sticky="ew", pady=(6, 0))
         ttk.Label(row, text="Focus").pack(side="left")
-        self.focus_var = tk.StringVar(value=self.settings["focus"])
-        ttk.Entry(row, textvariable=self.focus_var, width=6).pack(side="left", padx=6)
-        ttk.Label(row, text="blank = auto,  [ ] adjust", style="Dim.TLabel").pack(side="left")
+        self.focus_var = tk.StringVar(value=str(self.settings["focus"]))
+        self.auto_focus = tk.BooleanVar(value=not self.focus_var.get().strip())
+        tk.Checkbutton(row, text="Auto", variable=self.auto_focus, command=self._auto_toggled, bg=SIDE, fg=FG,
+                       selectcolor=PANEL, activebackground=SIDE, activeforeground=FG, highlightthickness=0,
+                       bd=0, font=(FONT, 10)).pack(side="left", padx=(6, 4))
+        self.focus_scale = ttk.Scale(row, from_=0, to=250, command=self._focus_slid, length=130)
+        self.focus_scale.pack(side="left")
+        self.focus_label = ttk.Label(row, text="", width=4, style="Dim.TLabel")
+        self.focus_label.pack(side="left", padx=4)
+        try:
+            self.focus_scale.set(float(self.focus_var.get() or 120))
+        except ValueError:
+            self.focus_scale.set(120)
+        self._show_focus()
+        row = ttk.Frame(side)
+        row.grid(sticky="ew", pady=(6, 0))
+        self.best_focus_btn = ttk.Button(row, text="Find best focus", command=self.find_best_focus)
+        self.best_focus_btn.pack(side="left")
+        self.cam_info = ttk.Label(row, text="", style="Dim.TLabel")
+        self.cam_info.pack(side="left", padx=8)
 
         section("Card details from")
         self.lookup_names = {NO_LOOKUP: "", **{label: key for key, (label, _) in lookup.SOURCES.items()}}
         current = next((k for k, v in self.lookup_names.items() if v == self.settings.get("lookup")), NO_LOOKUP)
         self.lookup_var = tk.StringVar(value=current)
-        ttk.Combobox(side, textvariable=self.lookup_var, values=list(self.lookup_names),
-                     state="readonly").grid(sticky="ew")
+        lk = ttk.Combobox(side, textvariable=self.lookup_var, values=list(self.lookup_names), state="readonly")
+        lk.grid(sticky="ew")
+        lk.bind("<<ComboboxSelected>>", lambda e: self.builder.refresh())
 
         section("Add cards")
         self.enroll_btn = ttk.Button(side, text="Start adding cards", style="Accent.TButton",
@@ -228,12 +253,17 @@ class App:
 
         section("Sort")
         self.rule_var = tk.StringVar(value=self.settings["rule"])
-        ttk.Entry(side, textvariable=self.rule_var).grid(sticky="ew")
-        ttk.Label(side, text="cost <= 3 · colors has blue · price >= 1\nrarity in rare,mythic · foil == yes",
-                  style="Dim.TLabel", justify="left").grid(sticky="w", pady=(4, 6))
+        self.rule_summary = tk.Label(side, text="", bg=SIDE, fg=FG, font=(FONT, 10), anchor="w", justify="left",
+                                     wraplength=300)
+        self.rule_summary.grid(sticky="ew", pady=(0, 2))
+        ttk.Label(side, text="Change it in the panel on the right", style="Dim.TLabel").grid(sticky="w", pady=(0, 6))
         self.sort_btn = ttk.Button(side, text="Start sorting", style="Go.TButton",
                                    command=lambda: self.toggle("sort"))
         self.sort_btn.grid(sticky="ew")
+        self.sound_var = tk.BooleanVar(value=bool(self.settings.get("sound", False)))
+        tk.Checkbutton(side, text="Sound when a card is decided", variable=self.sound_var, bg=SIDE, fg=DIM,
+                       selectcolor=PANEL, activebackground=SIDE, activeforeground=FG, highlightthickness=0,
+                       bd=0, font=(FONT, 9)).grid(sticky="w", pady=(6, 0))
         ttk.Button(side, text="Export inventory…", command=self.export).grid(sticky="ew", pady=(8, 0))
 
         section("Activity")
@@ -264,19 +294,45 @@ class App:
         self.panels = {"idle": self._idle_panel(), "enroll": self._enroll_panel(), "sort": self._sort_panel()}
 
     def _idle_panel(self) -> ttk.Frame:
-        p = ttk.Frame(self.right, style="Panel.TFrame")
+        """Camera off: the rule builder (scrolls if it gets tall) and a short how-to."""
+        outer = ttk.Frame(self.right, style="Panel.TFrame")
+        outer.rowconfigure(0, weight=1)
+        outer.columnconfigure(0, weight=1)
+        canvas = tk.Canvas(outer, bg=PANEL, highlightthickness=0, bd=0)
+        bar = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=bar.set)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        bar.grid(row=0, column=1, sticky="ns")
+        p = ttk.Frame(canvas, style="Panel.TFrame")
+        win = canvas.create_window((0, 0), window=p, anchor="nw")
+        p.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(win, width=e.width))
+        canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(-1 if e.delta > 0 else 1, "units")
+                        if self.mode is None else None)
+
+        self.builder = RuleBuilder(p, self.rule_var, self.catalog_var.get, on_change=self._rule_changed,
+                                   game=lambda: self.lookup_names.get(self.lookup_var.get(), "")
+                                   if self.lookup_names.get(self.lookup_var.get(), "") in ("magic", "riftbound") else "")
+        self.builder.pack(fill="x")
+        ttk.Separator(p).pack(fill="x", pady=16)
         ttk.Label(p, text="How it works", style="Heading.TLabel").pack(anchor="w")
-        steps = ("1.  Add cards: hold each card under the camera and press Space. "
-                 "SortBuddy reads it, looks up its details, and you press Enter to save.\n\n"
-                 "2.  Or skip that: type a sort rule and Start sorting. Each card is "
-                 "identified from its bottom line (set + number), added to your list, "
-                 "and gets a big YES or NO. Cards already in your list are recognised "
-                 "instantly from their picture.\n\n"
+        steps = ("Card backs: put one face down under the camera while sorting and click "
+                 "“This is a card back…”. Then “Face up or down” and “Game” work for face-down "
+                 "cards too, e.g. split a mixed box by game, or face up vs face down.\n\n"
+                 "Start sorting: each card is identified from its bottom line (set + number), added to "
+                 "your list, and gets a big YES or NO. Cards already in your list are recognised "
+                 "instantly from their picture. You don't have to add cards first.\n\n"
+                 "Add cards: for checking each card's details yourself (and Korean names).\n\n"
                  "Keys:  Space capture · Enter save · Tab next name guess · Esc discard · "
                  "[ ] focus · A autofocus · U undo · F11 full screen")
-        tk.Label(p, text=steps, bg=PANEL, fg=DIM, font=(FONT, 10), justify="left", wraplength=370).pack(
-            anchor="w", pady=(10, 0))
-        return p
+        tk.Label(p, text=steps, bg=PANEL, fg=DIM, font=(FONT, 9), justify="left", wraplength=330).pack(
+            anchor="w", pady=(8, 0))
+        return outer
+
+    def _rule_changed(self, summary: str) -> None:
+        self.rule_summary.configure(text=summary or "No rule yet: pick what goes in the YES pile",
+                                    fg=FG if summary else AMBER)
+        self.rule_description = summary
 
     def _enroll_panel(self) -> ttk.Frame:
         p = ttk.Frame(self.right, style="Panel.TFrame")
@@ -339,7 +395,11 @@ class App:
         self.recent = tk.Listbox(p, bg=BG, fg=FG, relief="flat", highlightthickness=0, font=(FONT, 10),
                                  activestyle="none", selectbackground=BG, height=12)
         self.recent.pack(fill="both", expand=True)
-        ttk.Button(p, text="Undo last  (U)", command=self.undo).pack(fill="x", pady=(10, 0))
+        row = ttk.Frame(p, style="Panel.TFrame")
+        row.pack(fill="x", pady=(10, 0))
+        ttk.Button(row, text="Undo last  (U)", command=self.undo).pack(side="left", fill="x", expand=True)
+        ttk.Button(row, text="This is a card back…", command=self.teach_back).pack(
+            side="left", fill="x", expand=True, padx=(8, 0))
         return p
 
     def _no_button_focus(self, widget) -> None:
@@ -379,6 +439,7 @@ class App:
     def _save_settings(self) -> None:
         data = {"catalog": self.catalog_var.get(), "camera": self._camera_index(),
                 "focus": self.focus_var.get().strip(), "rule": self.rule_var.get(),
+                "resolution": self.res_var.get(), "sound": self.sound_var.get(),
                 "lookup": self.lookup_names.get(self.lookup_var.get(), ""), "version": 2}
         try:
             SETTINGS.write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -449,6 +510,9 @@ class App:
         path = Path(self.catalog_var.get())
         if mode == "sort":
             try:
+                if not self.rule_var.get().strip():
+                    messagebox.showinfo("SortBuddy", "First pick what goes in the YES pile (panel on the right).")
+                    return
                 self.rule = Rule(self.rule_var.get())
             except RuleError as e:
                 messagebox.showerror("SortBuddy", f"Sort rule problem: {e}")
@@ -475,10 +539,13 @@ class App:
             self.check_foil = any(f in ("foil", "price") for f in self.rule.fields)
             self.session = Session(self.catalog)
             self.track = None
+            self.last_hash = None
+            self.empty = 0
             self.unknown = 0
             self.log_path = path.parent / "sessions" / f"{time.strftime('%Y%m%d-%H%M%S')}.csv"
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
-            self.rule_label.configure(text=f"Rule:  {self.rule}   ·   {len(self.catalog)} cards in your list", fg=DIM)
+            self.rule_label.configure(text=f"{self.rule_description}   ·   {len(self.catalog)} card{'s' * (len(self.catalog) != 1)} in your list",
+                                      fg=DIM)
             self.verdict.configure(text="—", bg=LINE, fg=FG)
             self.verdict_name.configure(text="Show a card")
             self.recent.delete(0, "end")
@@ -498,12 +565,10 @@ class App:
             self.clear_pending()
 
         focus = self.focus_var.get().strip()
-        if focus and not focus.isdigit():
-            messagebox.showerror("SortBuddy", "Focus must be a number 0-255, or blank for autofocus.")
-            return
+        width, height = (int(x) for x in self.res_var.get().split(" × "))
         self.say(f"Opening camera {self._camera_index()}…")
         self.root.update()
-        cam = Camera(self._camera_index(), focus=int(focus) if focus else None, quiet=True)
+        cam = Camera(self._camera_index(), width, height, focus=int(focus) if focus.isdigit() else None, quiet=True)
         if not cam.ok:
             self.say(f"Can't open camera {self._camera_index()}. Try another number or “Find cameras”.", RED)
             return
@@ -513,10 +578,15 @@ class App:
         (self.enroll_btn if mode == "enroll" else self.sort_btn).configure(
             text="Stop", style="Stop.TButton")
         self.say(f"Camera {cam.index} · {cam.size} · {cam.focus_label}")
+        self.frame_times: list[float] = []
+        self.sharp = None
+        self.sweep = None
         self.view.focus_set()
         self.loop()
 
     def stop(self) -> None:
+        self.sweep = None
+        self.cam_info.configure(text="")
         if self.loop_id:
             self.root.after_cancel(self.loop_id)
             self.loop_id = None
@@ -533,6 +603,7 @@ class App:
             if self.identifier.index.ids:
                 self.identifier.index.save(cli._index_path(self.catalog_var.get()))
             self.refresh_count()
+            self.builder.refresh()
         self.mode = None
         self.pending = None
         self.enroll_btn.configure(text="Start adding cards", style="Accent.TButton")
@@ -553,7 +624,10 @@ class App:
             return
         ok, frame = self.cam.read()
         if ok:
-            self.found = extract_card(frame)
+            self.found, self.problem = extract_card_checked(frame)
+            self._camera_stats()
+            if self.sweep:
+                self._sweep_step()
             color = (255, 140, 79) if self.found else None  # BGR of ACCENT
             if self.mode == "sort":
                 color = self._sort_step()
@@ -564,10 +638,88 @@ class App:
             if w > 10 and h > 10:
                 self.photo = to_photo(frame, w, h)
                 self.view.configure(image=self.photo, text="")
-            if self.mode == "enroll" and self.pending is None:
-                self.say("Card found: press Space to capture" if self.found else
-                         "Hold a card flat under the camera", GREEN if self.found else DIM)
+            if self.mode == "enroll" and self.pending is None and not self.sweep:
+                if self.problem == "several":
+                    self.say("One card at a time, please", AMBER)
+                else:
+                    self.say("Card found: press Space to capture" if self.found else
+                             "Hold a card flat under the camera", GREEN if self.found else DIM)
         self.loop_id = self.root.after(15, self.loop)
+
+    # ---------------------------------------------------------------- camera
+    def _show_focus(self) -> None:
+        auto = self.auto_focus.get()
+        self.focus_label.configure(text="auto" if auto else str(int(self.focus_scale.get())))
+        self.focus_scale.state(["disabled"] if auto else ["!disabled"])
+
+    def _focus_slid(self, value) -> None:
+        if self.auto_focus.get():
+            return
+        v = int(round(float(value) / 5) * 5)  # the C920 focuses in steps of 5
+        self.focus_var.set(str(v))
+        self._show_focus()
+        if self.cam:
+            self.cam.set_focus(v)
+
+    def _auto_toggled(self) -> None:
+        if self.auto_focus.get():
+            self.focus_var.set("")
+            if self.cam:
+                self.cam.set_focus(None)
+        else:
+            self._focus_slid(self.focus_scale.get())
+        self._show_focus()
+
+    def _camera_stats(self) -> None:
+        """Frames per second, and how sharp the card is (updated a few times a second)."""
+        now = time.time()
+        self.frame_times = [t for t in self.frame_times if now - t < 2] + [now]
+        if len(self.frame_times) % 5 == 0:
+            if self.found:
+                self.sharp = sharpness(self.found[0])
+            fps = (len(self.frame_times) - 1) / max(1e-6, self.frame_times[-1] - self.frame_times[0])
+            sharp = f"  ·  sharpness {self.sharp:.0f}" if self.found and self.sharp is not None else ""
+            self.cam_info.configure(text=f"{fps:.0f} fps{sharp}")
+
+    def find_best_focus(self) -> None:
+        """Try focus settings with a card in view and keep the sharpest."""
+        if not self.cam:
+            messagebox.showinfo("SortBuddy", "Start the camera first (Add cards or Sort), with a card under it.")
+            return
+        self.auto_focus.set(False)
+        self._show_focus()
+        self.sweep = {"stage": "coarse", "values": list(range(0, 251, 25)), "i": 0, "wait": 8, "scores": {}}
+        self.cam.set_focus(self.sweep["values"][0])
+        self.best_focus_btn.state(["disabled"])
+
+    def _sweep_step(self) -> None:
+        sw = self.sweep
+        if not self.found:
+            self.say("Finding best focus: put a card under the camera", AMBER)
+            return
+        if sw["wait"] > 0:  # give the lens time to move
+            sw["wait"] -= 1
+            return
+        v = sw["values"][sw["i"]]
+        sw["scores"][v] = max(sw["scores"].get(v, 0), sharpness(self.found[0]))
+        self.say(f"Finding best focus… trying {v}", AMBER)
+        sw["i"] += 1
+        if sw["i"] < len(sw["values"]):
+            self.cam.set_focus(sw["values"][sw["i"]])
+            sw["wait"] = 6
+            return
+        best = max(sw["scores"], key=sw["scores"].get)
+        if sw["stage"] == "coarse":
+            fine = [x for x in range(best - 20, best + 21, 5) if 0 <= x <= 250]
+            sw.update(stage="fine", values=fine, i=0, wait=8)
+            self.cam.set_focus(fine[0])
+            return
+        self.sweep = None
+        self.best_focus_btn.state(["!disabled"])
+        self.focus_scale.set(best)
+        self._focus_slid(best)
+        self._save_settings()
+        self.say(f"Best focus: {best} (saved)", GREEN)
 
     # --------------------------------------------------------------- sorting
     def _rule_fields_ok(self) -> bool:
@@ -588,33 +740,42 @@ class App:
             "domain, type, power, might, energy, foil, language, price.\n\nStart anyway?")
 
     def _sort_step(self):
-        """Track the card in view; identify it once it holds still."""
-        t = self.track
+        """Track the card in view; identify it once it holds still.
+
+        A card is decided once. It only counts again if it's clearly a
+        different card, or the view was empty for a moment (taken away),
+        so nudging it or a flicker in detection doesn't re-decide it."""
+        if self.problem == "several":
+            self.say("One card at a time, please", AMBER)
+            return None
         if not self.found:
-            if t:
-                t["miss"] += 1
-                if t["miss"] >= 6:  # card taken away: the next one is a new card
-                    self.track = None
+            self.empty += 1
+            if self.empty >= 8:  # card taken away: the next card is new, even another copy
+                self.track, self.last_hash = None, None
             if not self.track:
                 self.say("Show a card", DIM)
             return None
+        self.empty = 0
         h = phash(self.found[0])
-        if t and hamming(h, t["hash"]) <= 45:
-            t.update(stable=t["stable"] + 1, miss=0, hash=h)
+        t = self.track
+        if t and hamming(h, t["hash"]) <= SAME_CARD:
+            t.update(stable=t["stable"] + 1, hash=h)
+        elif self.last_hash is not None and hamming(h, self.last_hash) <= SAME_CARD and t:
+            t.update(stable=t["stable"] + 1, hash=h)  # same card as just decided, only moved
         else:
-            t = self.track = {"hash": h, "stable": 1, "miss": 0, "state": "new", "result": None}
+            t = self.track = {"hash": h, "stable": 1, "state": "new", "yes": None}
         if t["state"] == "new" and t["stable"] >= 3:
             t["state"] = "pending"
-            t["start"] = time.time()
+            t["job"] = t.get("job", 0) + 1
             img = self.found[0].copy()
 
-            def work(track=t, img=img):
+            def work(track=t, img=img, job=t["job"]):
                 try:
                     result = self.identifier.identify(img, self.check_foil)
                 except Exception as e:  # noqa: BLE001 - e.g. offline: report, don't crash
                     print(f"Couldn't identify: {e}\n")
                     result = None
-                self.events.put(("identified", (track, result, img)))
+                self.events.put(("identified", (track, result, img, job)))
             self.background(work)
         if t["state"] == "pending":
             self.say("Identifying…", AMBER)
@@ -624,15 +785,17 @@ class App:
             return (66, 185, 245) if yes is None else (110, 207, 62) if yes else (91, 91, 239)
         return (200, 200, 200)
 
-    def _on_identified(self, track, result, img) -> None:
-        if self.mode != "sort":
-            return
+    def _on_identified(self, track, result, img, job) -> None:
+        if self.mode != "sort" or track.get("job") != job or track["state"] != "pending":
+            return  # stale: the card was re-decided (e.g. a card back was just taught)
         track["state"] = "done"
+        self.last_hash = track["hash"]
         if result is None:
             self.unknown += 1
             track["yes"] = None
             self.verdict.configure(text="?", bg=AMBER, fg="#0b0d12")
-            self.verdict_name.configure(text="Couldn't identify this card: set it aside")
+            self.verdict_name.configure(text="Couldn't identify this card: set it aside.\n"
+                                             "If it's a card back, click “This is a card back…” to teach it.")
             self.recent.insert(0, "?      Unknown card")
             self.recent.itemconfigure(0, fg=AMBER)
             self._update_counts()
@@ -641,7 +804,7 @@ class App:
         if result.new:
             self.identifier.learn(result, img)
             self.refresh_count()
-            self.rule_label.configure(text=f"Rule:  {self.rule}   ·   {len(self.catalog)} cards in your list")
+            self.rule_label.configure(text=f"{self.rule_description}   ·   {len(self.catalog)} card{'s' * (len(self.catalog) != 1)} in your list")
         card = Card(result.card_id, result.fields)
         yes = bool(self.rule(card))
         track["yes"] = yes
@@ -652,7 +815,8 @@ class App:
                "name": "found by name"}[result.how]
         self.say(f"{card.name}  ·  {how}  ·  {result.seconds:.1f}s" + ("  ·  added to your list" if result.new else ""),
                  FG)
-        self.root.bell()
+        if self.sound_var.get():
+            self.root.bell()
 
     def _update_counts(self) -> None:
         y, n = self.session.counts()
@@ -664,6 +828,29 @@ class App:
         self._update_counts()
         self.recent.insert(0, f"{'YES' if yes else 'NO '}   {name}")
         self.recent.itemconfigure(0, fg=GREEN if yes else RED)
+
+    def teach_back(self) -> None:
+        """Remember the card back in view as a game's back, then decide it."""
+        if self.mode != "sort" or not self.found:
+            messagebox.showinfo("SortBuddy", "Put a card face down under the camera first.")
+            return
+        img = self.found[0].copy()
+        win = tk.Toplevel(self.root, bg=PANEL, padx=20, pady=16)
+        win.title("Card back")
+        win.transient(self.root)
+        tk.Label(win, text="Which game's card back is this?", bg=PANEL, fg=FG, font=(FONT, 12, "bold")).pack(
+            anchor="w", pady=(0, 10))
+
+        def pick(game):
+            win.destroy()
+            card_id = self.identifier.teach_back(game, img)
+            print(f"Learned the {game} card back ({card_id}).\n")
+            self.refresh_count()
+            if self.track:  # decide the back in view now
+                self.track.update(state="new", stable=3)
+        for game in ("Magic", "Riftbound", "Pokemon", "One Piece", "Lorcana", "Yu-Gi-Oh"):
+            ttk.Button(win, text=game, command=lambda g=game: pick(g)).pack(fill="x", pady=2)
+        win.grab_set()
 
     def undo(self) -> None:
         """Take back the last decision; the card in view gets decided again."""
@@ -830,11 +1017,14 @@ class App:
         if key == "Tab" and self.pending:
             self.next_name()
             return "break"
-        if self.cam and key in ("bracketleft", "bracketright", "a"):
-            self.cam.handle_key(ord({"bracketleft": "[", "bracketright": "]", "a": "a"}[key]))
-            if self.cam.focus is not None:
-                self.focus_var.set(str(self.cam.focus))
-            self.say(f"Camera {self.cam.index} · {self.cam.size} · {self.cam.focus_label}")
+        if key in ("bracketleft", "bracketright"):
+            current = float(self.focus_var.get() or self.focus_scale.get())
+            self.focus_scale.set(current + (5 if key == "bracketright" else -5))
+            self._focus_slid(self.focus_scale.get())
+            return "break"
+        if key == "a":
+            self.auto_focus.set(not self.auto_focus.get())
+            self._auto_toggled()
             return "break"
         if key == "u":
             self.undo()

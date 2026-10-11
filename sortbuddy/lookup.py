@@ -14,6 +14,7 @@ Currently:
 
 from __future__ import annotations
 
+import difflib
 import json
 import re
 import time
@@ -95,6 +96,7 @@ def _fields(card: dict) -> dict:
         "year": int(card["released_at"][:4]) if card.get("released_at") else None,
         "price": _num(prices.get("usd")),       # USD, non-foil, as of enrolling
         "price_foil": _num(prices.get("usd_foil")),
+        "game": "magic",
     }
     return {k: v for k, v in fields.items() if v not in (None, "", [])}
 
@@ -108,16 +110,26 @@ _set_cache: dict[str, list] = {}
 
 
 def _cached_set(key: str, fetch) -> list:
+    """A set's card list: from memory, else disk, else download. Old copies
+    on disk are only replaced by a successful download, never deleted."""
     if key in _set_cache:
         return _set_cache[key]
     path = CACHE_DIR / f"{key}.json"
+    stale = None
     try:
+        stale = json.loads(path.read_text(encoding="utf-8"))
         if time.time() - path.stat().st_mtime < CACHE_DAYS * 86400:
-            _set_cache[key] = json.loads(path.read_text(encoding="utf-8"))
-            return _set_cache[key]
+            _set_cache[key] = stale
+            return stale
     except (OSError, ValueError):
         pass
-    cards = fetch()
+    try:
+        cards = fetch()
+    except LookupError_:
+        cards = []
+    if not cards and stale:
+        _set_cache[key] = stale  # offline or site down: the older copy is fine
+        return stale
     _set_cache[key] = cards
     if cards:
         try:
@@ -143,6 +155,21 @@ def _scryfall_set(set_code: str) -> list:
     return _cached_set(f"mtg-{set_code.upper()}", fetch)
 
 
+def _best_name(cards: list, name: str, min_ratio: float = 0.75):
+    """The card in `cards` whose name is closest to what OCR read."""
+    if not name or not name.isascii():
+        return None
+    def norm(x):
+        return re.sub(r"[^a-z0-9 ]", "", x.lower().split("//")[0]).strip()
+    target = norm(name)
+    best, best_ratio = None, 0.0
+    for c in cards:
+        r = difflib.SequenceMatcher(None, norm(c.get("name", "")), target).ratio()
+        if r > best_ratio:
+            best, best_ratio = c, r
+    return best if best_ratio >= min_ratio else None
+
+
 def scryfall(name: str, set_code: str | None = None, number: int | None = None,
              fuzzy: bool = True) -> tuple[dict, bool] | None:
     """Returns (fields, printing_confirmed). Without a set code that Scryfall
@@ -160,6 +187,10 @@ def scryfall(name: str, set_code: str | None = None, number: int | None = None,
     if not name:
         return None
     if set_code:
+        # Number missing or misread: match the name within the set, locally.
+        match = _best_name(_scryfall_set(set_code), name)
+        if match:
+            return _fields(match), True
         for mode in ("exact", "fuzzy"):
             card = _get(f"{api}/named?{mode}={q(name)}&set={q(set_code.lower())}")
             if card:
@@ -169,6 +200,10 @@ def scryfall(name: str, set_code: str | None = None, number: int | None = None,
 
 
 RIFTCODEX = "https://api.riftcodex.com"
+# Each Riftbound domain has a color; saved as `colors` so one rule like
+# "colors has blue" works for Magic and Riftbound cards alike.
+DOMAIN_COLORS = {"fury": "red", "calm": "green", "mind": "blue", "body": "orange",
+                 "chaos": "purple", "order": "yellow"}
 
 
 def _riftcodex_set(set_code: str) -> list:
@@ -212,6 +247,8 @@ def _riftcodex_fields(card: dict) -> dict:
         "artist": (card.get("media") or {}).get("artist", ""),
         "tags": card.get("tags") or [],
         "variant": ", ".join(k for k in ("alternate_art", "overnumbered", "signature") if meta.get(k)),
+        "colors": [DOMAIN_COLORS.get(d.lower(), d.lower()) for d in cls.get("domain") or []] or ["colorless"],
+        "game": "riftbound",
     }
     return {k: v for k, v in fields.items() if v not in (None, "", [])}
 
@@ -228,6 +265,10 @@ def riftcodex(name: str, set_code: str | None = None, number: int | None = None,
             if not name or any(_same_name(c["name"], name) for c in same):
                 match = next((c for c in same if not name or _same_name(c["name"], name)), same[0])
                 return _riftcodex_fields(match), True
+    if set_code and name:
+        match = _best_name(_riftcodex_set(set_code), name)
+        if match:
+            return _riftcodex_fields(match), True
     if not name or not name.isascii():
         return None
     data = _get(f"{RIFTCODEX}/cards/name?{'fuzzy' if fuzzy else 'exact'}={urllib.parse.quote(name)}&size=5",
@@ -248,7 +289,9 @@ def auto(name: str, set_code: str | None = None, number: int | None = None) -> t
     if set_code and set_code.upper() in RIFTBOUND_SETS:
         return riftcodex(name, set_code, number) or scryfall(name, None, None, fuzzy=False)
     if set_code:
-        return scryfall(name, set_code, number) or riftcodex(name, set_code, number)
+        # A set code we read is a Magic one (or unknown): stay in Magic, with an
+        # exact-name fallback in case the set code itself was misread.
+        return scryfall(name, set_code, number) or scryfall(name, None, None, fuzzy=False)
     # Only a name: an exact match in either game beats a fuzzy one.
     return (scryfall(name, fuzzy=False) or riftcodex(name, fuzzy=False)
             or scryfall(name) or riftcodex(name))

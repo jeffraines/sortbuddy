@@ -13,6 +13,8 @@ recognises them.
 
 from __future__ import annotations
 
+import difflib
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -35,6 +37,11 @@ class Result:
     extra: dict = field(default_factory=dict)
 
 
+# Picture matches this close (bits out of 256) are trusted without reading
+# the bottom line; looser ones up to max_distance are checked.
+SURE_DISTANCE, SURE_MARGIN = 40, 15
+
+
 class Identifier:
     def __init__(self, catalog: Catalog, catalog_path: str | Path, index: FingerprintIndex,
                  source, use_ocr: bool = True, max_distance: int = 60, min_margin: int = 8):
@@ -47,9 +54,13 @@ class Identifier:
         self.use_ocr = use_ocr
         self.max_distance, self.min_margin = max_distance, min_margin
 
-    def known(self, card: np.ndarray) -> str | None:
+    def known(self, card: np.ndarray) -> tuple[str | None, bool]:
+        """(card id or None, sure). A close picture match is sure; a looser
+        one needs checking against the bottom line."""
         m = self.index.match(card) if len(self.index) else None
-        return m.card_id if m and m.confident(self.max_distance, self.min_margin) else None
+        if not m or not m.confident(self.max_distance, self.min_margin):
+            return None, False
+        return m.card_id, m.distance <= SURE_DISTANCE and m.margin >= SURE_MARGIN
 
     def identify(self, card: np.ndarray, check_foil: bool = False) -> Result | None:
         """Safe to call from a worker thread (doesn't touch the catalog file).
@@ -58,21 +69,29 @@ class Identifier:
         from its picture still gets its bottom line read for the foil mark.
         """
         start = time.time()
-        known = self.known(card)
+        known, sure = self.known(card)
+        if known and self.catalog[known].get("face") == "back":
+            return Result(known, dict(self.catalog[known].fields), "known", time.time() - start)
+        quick = None
+        if known and (not sure or check_foil) and self.use_ocr:
+            quick = ocr.read_collector(card)
+            mine = self.catalog[known].fields
+            read_other = (quick.set_code and quick.number is not None and
+                          (str(quick.set_code).upper(), quick.number) != (str(mine.get("set", "")).upper(), mine.get("number")))
+            if read_other and not sure:
+                known = None  # the bottom line says it's a different card: trust that
         if known:
             fields = dict(self.catalog[known].fields)
             fields.pop("foil", None)
-            if check_foil and self.use_ocr:
-                foil = ocr.read_collector(card).foil
-                if foil is not None:
-                    fields["foil"] = "yes" if foil else "no"
-                    if foil and "price_foil" in fields:
-                        fields["price"] = fields["price_foil"]
+            if quick is not None and quick.foil is not None:
+                fields["foil"] = "yes" if quick.foil else "no"
+                if quick.foil and "price_foil" in fields:
+                    fields["price"] = fields["price_foil"]
             return Result(known, fields, "known", time.time() - start)
         if not self.use_ocr or self.source is None:
             return None
 
-        quick = ocr.read_collector(card)
+        quick = quick or ocr.read_collector(card)
         if quick.set_code and quick.number is not None:
             prop = propose(quick, "", "", self.source, {})
             if prop.found:
@@ -80,13 +99,30 @@ class Identifier:
                               {"image": quick.upright})
 
         full = ocr.read_card(card)
+        if quick.set_code and not full.set_code:
+            full.set_code = quick.set_code
         cache: dict = {}
         for name in full.names[:3] or [""]:
             prop = propose(full, name, "", self.source, cache)
-            if prop.found:
+            # Found by name alone (set not confirmed): only trust a near-exact
+            # name. A wrong card is worse than a "?".
+            if prop.found and (prop.kind == "ok" or _similar(name, prop.fields.get("name", "")) >= 0.85):
                 return Result(prop.card_id, prop.fields, "name", time.time() - start, True,
                               {"image": full.upright})
         return None
+
+
+    def teach_back(self, game: str, card: np.ndarray) -> str:
+        """Remember what this game's card back looks like. Teaching it again
+        adds another reference photo."""
+        from .cli import save_reference
+
+        card_id = "BACK-" + re.sub(r"[^a-z0-9]+", "-", game.lower()).strip("-")
+        if card_id not in self.catalog.cards:
+            save_reference(self.catalog, self.catalog_path, card_id, card,
+                           name=f"{game} card back", face="back", game=game.lower())
+        self.index.add(card_id, card)
+        return card_id
 
     def learn(self, result: Result, card: np.ndarray) -> None:
         """Add a newly identified card to the list and the picture index.
@@ -94,6 +130,8 @@ class Identifier:
         from .cli import save_reference
 
         img = result.extra.get("image", card)
+        if result.how == "known":
+            return
         existing = self.catalog.get(result.card_id)
         has_photo = existing is not None and self.catalog.image_path(existing) and \
             self.catalog.image_path(existing).exists()
@@ -101,3 +139,9 @@ class Identifier:
             fields = {k: v for k, v in result.fields.items() if k != "image"}
             save_reference(self.catalog, self.catalog_path, result.card_id, img, **fields)
         self.index.add(result.card_id, img)
+
+
+def _similar(a: str, b: str) -> float:
+    def norm(x):
+        return re.sub(r"[^a-z0-9 ]", "", x.lower().split("//")[0]).strip()
+    return difflib.SequenceMatcher(None, norm(a), norm(b)).ratio()

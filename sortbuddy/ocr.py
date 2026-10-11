@@ -221,6 +221,13 @@ def _collector(lines: list[Line], card_h: int, card_w: int) -> tuple[str | None,
                      + 2 * bool(re.search(r"\d{2,}", text)) - 2 * (words >= 3))
             if score > best_score:
                 best_set, best_score = code, score
+    # A line that *starts* with the number counts even if words follow:
+    # "C 0015 Story Spotlight" (those words would make it look like prose).
+    for ln in lines:
+        if ln.y0 > 0.85 * card_h and ln.x0 < 0.5 * card_w and ln not in corner:
+            m = re.match(r"\s*[CURMLTSP]?\s?(\d{2,4})(?!\d)(?!\s*/\s*\d)", ln.text)
+            if m and not (len(m.group(1)) == 4 and 1990 <= int(m.group(1)) <= 2099):
+                numbers.append((1 if m.group(1).startswith("0") else 2, int(m.group(1))))
     number = min(numbers)[1] if numbers else None
     return best_set, number
 

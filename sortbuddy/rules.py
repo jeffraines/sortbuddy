@@ -6,6 +6,8 @@ each card. Rules are small expressions over catalog fields:
     set == OGN
     cost <= 3
     rarity in rare,epic
+    rarity not in common,uncommon
+    type contains unit|spell
     domain has fury
     text contains draw a card
     set == OGN and rarity != common
@@ -24,7 +26,7 @@ from dataclasses import dataclass
 
 from .catalog import Card, _coerce
 
-_CLAUSE = re.compile(r"^\s*([A-Za-z_][\w.]*)\s*(<=|>=|!=|==|=|<|>|\bin\b|\bhas\b|\bcontains\b)\s*(.+?)\s*$")
+_CLAUSE = re.compile(r"^\s*([A-Za-z_][\w.]*)\s*(<=|>=|!=|==|=|<|>|\bnot\s+in\b|\bin\b|\bhas\b|\bcontains\b)\s*(.+?)\s*$")
 
 
 class RuleError(ValueError):
@@ -44,10 +46,13 @@ class Clause:
     def test(self, card: Card) -> bool:
         actual = card.get(self.field)
         if actual is None:
-            return self.op == "!="
+            return self.op in ("!=", "not in")
         if self.op == "contains":
             items = actual if isinstance(actual, list) else [actual]
-            return any(str(self.value).lower() in str(x).lower() for x in items)
+            words = self.value if isinstance(self.value, list) else [self.value]  # "unit|spell": either
+            return any(str(w).lower() in str(x).lower() for w in words for x in items)
+        if self.op == "not in":
+            return not Clause(self.field, "in", self.value).test(card)
         if self.op == "has":
             items = actual if isinstance(actual, list) else [actual]
             return _norm(self.value) in [_norm(x) for x in items]
@@ -82,8 +87,8 @@ class Rule:
                 if not m:
                     raise RuleError(f"can't parse {part!r} (expected e.g. 'cost <= 3')")
                 field, op, raw = m.groups()
-                op = "==" if op == "=" else op.lower()
-                if op == "in":
+                op = "==" if op == "=" else re.sub(r"\s+", " ", op.lower())
+                if op in ("in", "not in"):
                     value = [_coerce(x) for x in raw.split(",") if x.strip()]
                 else:
                     value = _coerce(raw.strip("'\""))

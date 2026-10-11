@@ -336,3 +336,70 @@ def test_identify_without_enrolling_then_recognise(demo, tmp_path):
     looked_up.clear()
     r2 = ident.identify(extract_card(fake_photo(img, rng, upside_down=True))[0])
     assert r2.card_id == "DEMO-005" and r2.how == "known" and not looked_up
+
+
+def test_rule_builder_round_trip():
+    from sortbuddy.rulebuilder import Condition, describe, from_rule, rule_text
+
+    conds = [Condition("rarity", "is any of", ["rare", "epic"]),
+             Condition("cost", "at most", ["3"]),
+             Condition("type", "is any of", ["Unit", "Spell"]),
+             Condition("domain", "is none of", ["fury"]),
+             Condition("name", "contains", ["Jinx"]),
+             Condition("set", "is any of", [])]          # nothing ticked yet: left out
+    text = rule_text(conds)
+    assert text == ("rarity in rare,epic and cost <= 3 and type contains Unit|Spell "
+                    "and domain not in fury and name contains Jinx")
+    assert describe(conds) == ("Rarity is Rare or Epic, and Cost at most 3, and Card type is Unit or Spell, "
+                               "and Domain is not Fury, and Name contains “Jinx”")
+    back = from_rule(text)
+    assert [(c.key, c.op, c.values) for c in back] == [(c.key, c.op, c.values) for c in conds[:5]]
+    card = Card("x", {"rarity": "rare", "cost": 2, "type": "Unit", "domain": ["mind"], "name": "Jinx - Loose Cannon"})
+    assert Rule(text)(card)
+    assert from_rule("cost <= 3 or rarity == rare") is None   # OR: builder can't show it
+
+
+def _on_table(card, corners, size=(1080, 1920), bg=(170, 190, 205)):
+    frame = np.full((*size, 3), bg, np.uint8)
+    h, w = card.shape[:2]
+    m = cv2.getPerspectiveTransform(np.float32([[0, 0], [w, 0], [w, h], [0, h]]), np.float32(corners))
+    return cv2.warpPerspective(card, m, size[::-1], dst=frame, borderMode=cv2.BORDER_TRANSPARENT)
+
+
+def test_overlapping_cards_are_not_one_card(demo):
+    from sortbuddy.vision import extract_card_checked
+
+    _, catalog, _ = demo
+    a = cv2.imread(str(catalog.image_path(catalog["DEMO-001"])))
+    b = cv2.imread(str(catalog.image_path(catalog["DEMO-002"])))
+    one = _on_table(a, [[700, 200], [1100, 200], [1100, 760], [700, 760]])
+    found, problem = extract_card_checked(one)
+    assert found is not None and problem == ""
+    # Second card overlapping the first, rotated: no outline spanning both.
+    both = one.copy()
+    m = cv2.getPerspectiveTransform(np.float32([[0, 0], [315, 0], [315, 440], [0, 440]]),
+                                    np.float32([[950, 300], [1350, 380], [1250, 920], [850, 840]]))
+    both = cv2.warpPerspective(b, m, (1920, 1080), dst=both, borderMode=cv2.BORDER_TRANSPARENT)
+    found, problem = extract_card_checked(both)
+    assert found is None and problem == "several"
+
+
+def test_card_back_is_recognised_without_reading(demo, tmp_path):
+    from sortbuddy.identify import Identifier
+
+    _, catalog, _ = demo
+    back = np.full((440, 315, 3), (40, 60, 120), np.uint8)
+    cv2.ellipse(back, (157, 220), (120, 180), 0, 0, 360, (60, 90, 170), -1)
+    cv2.putText(back, "BACK", (90, 230), cv2.FONT_HERSHEY_DUPLEX, 1.4, (200, 200, 60), 3)
+
+    def no_lookup(*a):
+        raise AssertionError("card backs must not be looked up")
+
+    ident = Identifier(Catalog([], tmp_path), tmp_path / "list.csv",
+                       FingerprintIndex([], np.zeros((0, 32), np.uint8)), no_lookup)
+    rng = random.Random(3)
+    ident.teach_back("Magic", extract_card(fake_photo(back, rng))[0])
+    r = ident.identify(extract_card(fake_photo(back, rng, upside_down=True))[0])
+    assert r.card_id == "BACK-magic" and r.how == "known"
+    assert r.fields["face"] == "back" and r.fields["game"] == "magic"
+    assert Rule("face == back and game == magic")(Card(r.card_id, r.fields))

@@ -98,7 +98,8 @@ def export_inventory(catalog: Catalog, log_paths: list[str | Path], out: str | P
     for p in log_paths:
         with Path(p).open(newline="", encoding="utf-8") as f:
             for row in csv.DictReader(f):
-                counts[row["id"]] += 1
+                if not row["id"].startswith("BACK-"):  # card backs aren't part of the collection
+                    counts[row["id"]] += 1
     with Path(out).open("w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(["id", *columns, "quantity"])
