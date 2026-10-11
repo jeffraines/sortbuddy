@@ -2,6 +2,7 @@
 
     sortbuddy demo      ./demo                         # fake card set to play with
     sortbuddy index     ./demo/catalog.json            # build fingerprint index
+    sortbuddy cameras                                  # which --camera number is which
     sortbuddy enroll    ./mycards/catalog.csv          # photograph your own cards as references
     sortbuddy identify  ./demo/catalog.json photo.jpg  # identify cards in still photos
     sortbuddy scan      ./demo/catalog.json --rule "cost <= 3"
@@ -30,6 +31,40 @@ from .vision import extract_card
 
 MAX_DISTANCE = 60  # out of 256 bits
 MIN_MARGIN = 8
+
+
+def open_camera(index: int, quiet: bool = False):
+    """Open a webcam. On Windows, use DirectShow: OpenCV's default (Media
+    Foundation) can hang forever opening some USB webcams."""
+    if not quiet:
+        print(f"Opening camera {index}...", flush=True)
+    backend = cv2.CAP_DSHOW if sys.platform == "win32" else cv2.CAP_ANY
+    cap = cv2.VideoCapture(index, backend)
+    if not cap.isOpened():
+        cap.release()
+        if quiet:
+            return None
+        sys.exit(f"Can't open camera {index}. Try another --camera number, or run: sortbuddy cameras")
+    return cap
+
+
+def cmd_cameras(args):
+    try:  # probing missing indexes makes OpenCV log a wall of warnings
+        cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_SILENT)
+    except AttributeError:
+        pass
+    found = 0
+    for i in range(args.max):
+        cap = open_camera(i, quiet=True)
+        if cap is None:
+            continue
+        ok, frame = cap.read()
+        cap.release()
+        size = f"{frame.shape[1]}x{frame.shape[0]}" if ok else "opened, but no picture"
+        print(f"--camera {i}: {size}")
+        found += 1
+    if not found:
+        print("No cameras found. Is the webcam plugged in and not in use by another app?")
 
 
 def _index_path(catalog_path: str) -> Path:
@@ -129,9 +164,7 @@ def cmd_enroll(args):
     todo = [c for c in catalog.cards.values()
             if not (catalog.image_path(c) and catalog.image_path(c).exists())]
 
-    cap = cv2.VideoCapture(args.camera)
-    if not cap.isOpened():
-        sys.exit(f"Can't open camera {args.camera}")
+    cap = open_camera(args.camera)
     print("Hold one card flat in view. SPACE captures, S skips (listed cards), Q finishes.")
     added = 0
     try:
@@ -224,9 +257,7 @@ def cmd_scan(args):
     log = Path(args.log or f"sessions/{time.strftime('%Y%m%d-%H%M%S')}.csv")
     log.parent.mkdir(parents=True, exist_ok=True)
 
-    cap = cv2.VideoCapture(args.camera)
-    if not cap.isOpened():
-        sys.exit(f"Can't open camera {args.camera}")
+    cap = open_camera(args.camera)
     gui = not args.no_window
     print(f"Sorting on: {desc}")
     print("Show one card at a time. Keys (in the window): q quit, u undo last, r rescan.")
@@ -307,6 +338,10 @@ def main(argv=None):
     p.add_argument("catalog")
     p.add_argument("--detect", action="store_true", help="reference images are photos; find the card in each")
     p.set_defaults(fn=cmd_index)
+
+    p = sub.add_parser("cameras", help="list webcams and their --camera numbers")
+    p.add_argument("--max", type=int, default=5)
+    p.set_defaults(fn=cmd_cameras)
 
     p = sub.add_parser("enroll", help="photograph your own cards with the webcam as references")
     p.add_argument("catalog", help="catalog .csv or .json (created if missing)")
