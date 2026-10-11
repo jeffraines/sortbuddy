@@ -122,6 +122,12 @@ class App:
         self.loop_id = None
         self.photo = None
         self.found = None  # latest (warped card, corners) from the camera
+        # Camera state, also used by buttons pressed before the camera starts.
+        self.problem = ""
+        self.frame = None
+        self.sweep = None
+        self.track = None
+        self.frame_times: list[float] = []
         self.pending = None  # captured card waiting to be saved
         self.added = 0
         self.busy = False
