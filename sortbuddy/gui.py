@@ -273,7 +273,7 @@ class App:
         row.grid(sticky="ew", pady=(6, 0))
         self.best_focus_btn = ttk.Button(row, text="Calibrate camera", command=self.calibrate, width=17)
         self.best_focus_btn.pack(side="left")
-        self.cam_info = ttk.Label(row, text="", style="Dim.TLabel")
+        self.cam_info = ttk.Label(row, text="", style="Dim.TLabel", wraplength=150, justify="left")
         self.cam_info.pack(side="left", padx=8)
         self.light_label = tk.Label(side, text="", bg=SIDE, fg=DIM, font=(FONT, 10), anchor="w", justify="left",
                                     wraplength=310)
@@ -798,7 +798,7 @@ class App:
                 else:
                     self.light_label.configure(text="Light: put a card under the camera to check", fg=DIM)
             fps = (len(self.frame_times) - 1) / max(1e-6, self.frame_times[-1] - self.frame_times[0])
-            sharp = f"  ·  sharpness {self.sharp:.0f}" if self.found and self.sharp is not None else ""
+            sharp = f"\nsharpness {self.sharp:.0f}" if self.found and self.sharp is not None else ""
             codec = getattr(self.cam, "codec", "")
             slow = "  slow" if fps < 12 and len(self.frame_times) > 10 else ""
             self.cam_info.configure(text=f"{fps:.0f} fps {codec}{sharp}{slow}")
