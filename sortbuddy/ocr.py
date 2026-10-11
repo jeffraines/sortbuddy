@@ -190,6 +190,7 @@ def _details(lines: list[Line], card_h: int, card_w: int) -> dict:
         if r and ln.y0 > 0.85 * card_h and ln.x0 < 0.5 * card_w:
             out["rarity"] = _RARITY[r.group(1)]
         if ln.y0 > 0.85 * card_h and ln.x0 < 0.5 * card_w and _LANGUAGE.search(t):
+            out.setdefault("language", _LANGUAGE.search(t).group(1))
             artist = _LANGUAGE.split(t, maxsplit=1)[-1]
             artist = re.sub(r"^[^A-Za-z]+", "", artist).strip()
             if len(artist) >= 4:
@@ -238,5 +239,10 @@ def read_card(card: np.ndarray) -> CardText:
             best, best_score, best_img = lines, score, img
     h, w = best_img.shape[:2]
     set_code, number = _collector(best, h, w)
-    return CardText(_name_candidates(best, h), set_code, number, _details(best, h, w), _foil(best, h, w),
-                    best, best_img)
+    details = _details(best, h, w)
+    names = _name_candidates(best, h)
+    if details.get("language", "EN") != "EN":
+        # The OCR model reads English (and Chinese); on e.g. a Korean card the
+        # name comes out as junk. Leave it blank; the lookup finds it by number.
+        names = [n for n in names if n.isascii()]
+    return CardText(names, set_code, number, details, _foil(best, h, w), best, best_img)

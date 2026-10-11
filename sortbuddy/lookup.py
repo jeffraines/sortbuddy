@@ -98,7 +98,8 @@ def _fields(card: dict) -> dict:
     return {k: v for k, v in fields.items() if v not in (None, "", [])}
 
 
-def scryfall(name: str, set_code: str | None = None, number: int | None = None) -> tuple[dict, bool] | None:
+def scryfall(name: str, set_code: str | None = None, number: int | None = None,
+             fuzzy: bool = True) -> tuple[dict, bool] | None:
     """Returns (fields, printing_confirmed). Without a set code that Scryfall
     recognises, the card is found by name and the printing is a guess."""
     api = "https://api.scryfall.com/cards"
@@ -114,7 +115,7 @@ def scryfall(name: str, set_code: str | None = None, number: int | None = None) 
             card = _get(f"{api}/named?{mode}={q(name)}&set={q(set_code.lower())}")
             if card:
                 return _fields(card), True
-    card = _get(f"{api}/named?fuzzy={q(name)}")
+    card = _get(f"{api}/named?{'fuzzy' if fuzzy else 'exact'}={q(name)}")
     return (_fields(card), False) if card else None
 
 
@@ -166,7 +167,8 @@ def _riftcodex_fields(card: dict) -> dict:
     return {k: v for k, v in fields.items() if v not in (None, "", [])}
 
 
-def riftcodex(name: str, set_code: str | None = None, number: int | None = None) -> tuple[dict, bool] | None:
+def riftcodex(name: str, set_code: str | None = None, number: int | None = None,
+              fuzzy: bool = True) -> tuple[dict, bool] | None:
     """Returns (fields, printing_confirmed), like scryfall()."""
     if set_code and number is not None:
         same = [c for c in _riftcodex_set(set_code) if c.get("collector_number") == number]
@@ -179,12 +181,32 @@ def riftcodex(name: str, set_code: str | None = None, number: int | None = None)
                 return _riftcodex_fields(match), True
     if not name or not name.isascii():
         return None
-    data = _get(f"{RIFTCODEX}/cards/name?fuzzy={urllib.parse.quote(name)}&size=5", "Riftcodex")
+    data = _get(f"{RIFTCODEX}/cards/name?{'fuzzy' if fuzzy else 'exact'}={urllib.parse.quote(name)}&size=5",
+                "Riftcodex")
     items = (data or {}).get("items", []) if isinstance(data, dict) else data or []
+    if not fuzzy:
+        items = [c for c in items if _same_name(c.get("name", ""), name)]
     return (_riftcodex_fields(items[0]), False) if items else None
 
 
+# Riftbound set codes (from Riftcodex /sets); anything else is tried as Magic.
+RIFTBOUND_SETS = {"OGN", "OGS", "SFD", "UNL", "VEN", "OPP", "PR", "JDG"}
+
+
+def auto(name: str, set_code: str | None = None, number: int | None = None) -> tuple[dict, bool] | None:
+    """Pick the database from the set code: Riftbound sets go to Riftcodex,
+    everything else to Scryfall (then Riftcodex by name as a last resort)."""
+    if set_code and set_code.upper() in RIFTBOUND_SETS:
+        return riftcodex(name, set_code, number) or scryfall(name, None, None, fuzzy=False)
+    if set_code:
+        return scryfall(name, set_code, number) or riftcodex(name, set_code, number)
+    # Only a name: an exact match in either game beats a fuzzy one.
+    return (scryfall(name, fuzzy=False) or riftcodex(name, fuzzy=False)
+            or scryfall(name) or riftcodex(name))
+
+
 SOURCES = {
+    "auto": ("Auto: Magic or Riftbound", auto),
     "mtg": ("Magic: The Gathering (Scryfall)", scryfall),
     "riftbound": ("Riftbound (Riftcodex)", riftcodex),
 }

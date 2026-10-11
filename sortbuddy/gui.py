@@ -35,7 +35,7 @@ from .vision import extract_card
 SETTINGS = Path.home() / ".sortbuddy-gui.json"
 NO_LOOKUP = "Off (fill in details yourself)"
 DEFAULTS = {"catalog": str(Path("mycards") / "catalog.csv"), "camera": 0, "focus": "",
-            "rule": "cost <= 3", "lookup": "mtg"}
+            "rule": "cost <= 3", "lookup": "auto", "version": 2}
 
 # Colors
 BG, SIDE, PANEL, LINE = "#121419", "#1a1d24", "#20242d", "#2c313c"
@@ -66,6 +66,9 @@ CARD_PARTS = [
     ("Number", lambda f: str(f.get("number", ""))),
     ("Rarity", lambda f: str(f.get("rarity", "")).title()),
     ("Variant", lambda f: str(f.get("variant", "")).replace("_", " ")),
+    ("Language", lambda f: {"EN": "English", "KR": "Korean", "KO": "Korean", "JP": "Japanese", "JA": "Japanese",
+                            "ZH": "Chinese", "CN": "Chinese", "DE": "German", "FR": "French", "ES": "Spanish",
+                            "IT": "Italian", "PT": "Portuguese", "RU": "Russian"}.get(f.get("language", ""), "")),
     ("Foil", lambda f: {"yes": "Yes (★ on bottom line)", "no": "No (• on bottom line)"}.get(f.get("foil", ""), "")),
     ("Artist", lambda f: f.get("artist", "")),
     ("Year", lambda f: str(f.get("year", ""))),
@@ -255,8 +258,7 @@ class App:
     def _idle_panel(self) -> ttk.Frame:
         p = ttk.Frame(self.right, style="Panel.TFrame")
         ttk.Label(p, text="How it works", style="Heading.TLabel").pack(anchor="w")
-        steps = ("Pick Magic or Riftbound under “Card details from”.\n\n"
-                 "1.  Add cards: hold each card under the camera and press Space. "
+        steps = ("1.  Add cards: hold each card under the camera and press Space. "
                  "SortBuddy reads it, looks up its details, and you press Enter to save.\n\n"
                  "2.  Type a sort rule, then Start sorting. Each card you show gets a "
                  "big YES or NO.\n\n"
@@ -357,14 +359,17 @@ class App:
     # -------------------------------------------------------------- settings
     def _load_settings(self) -> dict:
         try:
-            return {**DEFAULTS, **json.loads(SETTINGS.read_text(encoding="utf-8"))}
+            saved = json.loads(SETTINGS.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return dict(DEFAULTS)
+        if saved.get("version", 1) < 2:
+            saved["lookup"] = "auto"  # older versions saved "off" without anyone choosing it
+        return {**DEFAULTS, **saved, "version": 2}
 
     def _save_settings(self) -> None:
         data = {"catalog": self.catalog_var.get(), "camera": self._camera_index(),
                 "focus": self.focus_var.get().strip(), "rule": self.rule_var.get(),
-                "lookup": self.lookup_names.get(self.lookup_var.get(), "")}
+                "lookup": self.lookup_names.get(self.lookup_var.get(), ""), "version": 2}
         try:
             SETTINGS.write_text(json.dumps(data, indent=2), encoding="utf-8")
         except OSError:

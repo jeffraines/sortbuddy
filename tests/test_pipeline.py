@@ -278,3 +278,11 @@ def test_collector_info_when_ocr_merges_rarity_and_artist():
     for c_line, set_line in [("C0029", "FRA•EN David Auden Nash"), ("C0029", "FRA.EN DAVID AUDEN NASH"),
                              ("C 0029", "FRA • EN")]:
         assert _collector([at(c_line, 20, 835), at(set_line, 20, 855, 300)], 880, 630) == ("FRA", 29), (c_line, set_line)
+
+
+def test_language_read_from_riftbound_bottom_line():
+    from sortbuddy.ocr import Line, _collector, _details
+
+    lines = [Line("OGN · 114/298 · KR", 0.9, 20, 855, 300, 873)]
+    assert _collector(lines, 880, 630) == ("OGN", 114)
+    assert _details(lines, 880, 630)["language"] == "KR"

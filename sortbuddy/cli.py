@@ -433,7 +433,8 @@ def main(argv=None):
     p.add_argument("--focus", type=int, help="manual focus 0-255 (default: autofocus)")
     p.add_argument("--no-ocr", action="store_true", help="don't read names off cards")
     p.add_argument("--lookup", choices=sorted(lookup.SOURCES),
-                   help="fill in card details from an online database (mtg = Scryfall)")
+                   help="fill in card details from an online database: auto picks by set code, "
+                        "mtg = Scryfall, riftbound = Riftcodex")
     p.set_defaults(fn=cmd_enroll)
 
     def add_decision(p):

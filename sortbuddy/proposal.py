@@ -71,6 +71,8 @@ def propose(text, name: str, auto_id: str, source=None, cache: dict | None = Non
         else:
             card_id = slug(name) or auto_id
 
+    if text and text.extra.get("language"):
+        fields["language"] = text.extra["language"]
     foil = text.foil if text else None
     if foil is not None:
         fields["foil"] = "yes" if foil else "no"
