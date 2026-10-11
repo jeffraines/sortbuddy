@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sortbuddy"
+version = "0.1.0"
+description = "Small, cheap, at-home bulk sorter for trading card games"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24", "opencv-python>=4.8"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+sortbuddy = "sortbuddy.cli:main"
+
+[tool.setuptools]
+packages = ["sortbuddy"]
