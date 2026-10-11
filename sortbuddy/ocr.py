@@ -113,8 +113,11 @@ def _is_prose(text: str) -> bool:
 
 
 def _collector(lines: list[Line], card_h: int, card_w: int) -> tuple[str | None, int | None]:
+    # A line with a language code is collector info even if OCR also merged
+    # the artist ("FRA • EN David Auden Nash") into it.
     corner = [ln for ln in lines
-              if ln.y0 > 0.85 * card_h and ln.x0 < 0.5 * card_w and not _is_prose(ln.text)]
+              if ln.y0 > 0.85 * card_h and ln.x0 < 0.5 * card_w
+              and (_LANGUAGE.search(ln.text) or not _is_prose(ln.text))]
     best_set, best_score = None, 0
     numbers: list[tuple[int, int]] = []  # (priority, number)
     for ln in corner:
@@ -132,15 +135,19 @@ def _collector(lines: list[Line], card_h: int, card_w: int) -> tuple[str | None,
 
         for m in _SET.finditer(text):
             code = m.group(1)
-            if code.endswith("0") and text[m.end():m.end() + 1].isdigit():
-                code = code[:-1]  # "OGN029/298": that 0 starts the number
+            if text[m.end():m.end() + 1].isdigit():
+                # Runs straight into a number: "OGN029/298", "C0029" (rarity C,
+                # number 0029). Trailing digits belong to the number.
+                code = code.rstrip("0123456789")
             if len(code) < 3:
                 continue
             if sum(c.isalpha() for c in code) >= 2:
                 code = code[0] + code[1:].replace("0", "O")  # OCR reads O as zero
             if code in _NOT_SETS or _LANGUAGE.fullmatch(code):
                 continue
-            score = 1 + 3 * has_lang + (len(code) == 3) + 2 * bool(re.search(r"\d{2,}", text)) - 2 * (words >= 3)
+            next_to_lang = bool(re.match(r"\W{0,3}(EN|JP|JA|DE|FR|ES|IT|PT|KO|ZH|RU|CN)(?![A-Z])", text[m.end():].lstrip()))
+            score = (1 + 3 * has_lang + 3 * next_to_lang + (len(code) == 3)
+                     + 2 * bool(re.search(r"\d{2,}", text)) - 2 * (words >= 3))
             if score > best_score:
                 best_set, best_score = code, score
     number = min(numbers)[1] if numbers else None

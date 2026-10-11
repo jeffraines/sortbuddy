@@ -265,3 +265,16 @@ def test_foil_mark_on_bottom_line():
     assert _foil(bottom("LCI * EN"), 880, 630) is True   # OCR often reads the star as *
     assert _foil(bottom("LCI • EN"), 880, 630) is False
     assert _foil(bottom("LCI EN"), 880, 630) is None      # mark not read: don't guess
+
+
+def test_collector_info_when_ocr_merges_rarity_and_artist():
+    """Real OCR of Divining Duelist: 'C 0029' read without the space, and the
+    artist (small caps) merged onto the 'FRA • EN' line in mixed case."""
+    from sortbuddy.ocr import Line, _collector
+
+    def at(text, x, y, w=200):
+        return Line(text, 0.9, x, y, x + w, y + 18)
+
+    for c_line, set_line in [("C0029", "FRA•EN David Auden Nash"), ("C0029", "FRA.EN DAVID AUDEN NASH"),
+                             ("C 0029", "FRA • EN")]:
+        assert _collector([at(c_line, 20, 835), at(set_line, 20, 855, 300)], 880, 630) == ("FRA", 29), (c_line, set_line)
