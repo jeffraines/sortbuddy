@@ -2,6 +2,7 @@
 
     sortbuddy demo      ./demo                         # fake card set to play with
     sortbuddy index     ./demo/catalog.json            # build fingerprint index
+    sortbuddy enroll    ./mycards/catalog.csv          # photograph your own cards as references
     sortbuddy identify  ./demo/catalog.json photo.jpg  # identify cards in still photos
     sortbuddy scan      ./demo/catalog.json --rule "cost <= 3"
     sortbuddy plan      ./demo/catalog.json --key cost
@@ -12,6 +13,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 import time
 from pathlib import Path
@@ -77,8 +79,8 @@ def cmd_demo(args):
     print(f"Wrote {path} and images. Next: sortbuddy index {path}")
 
 
-def cmd_index(args):
-    catalog = Catalog.load(args.catalog)
+def build_index(catalog_path: str, detect: bool = False) -> FingerprintIndex:
+    catalog = Catalog.load(catalog_path)
     images, missing = {}, []
     for card in catalog.cards.values():
         p = catalog.image_path(card)
@@ -87,14 +89,92 @@ def cmd_index(args):
             missing.append(card.id)
             continue
         # Reference scans are usually already tight crops, but photos may not be.
-        found = extract_card(img) if args.detect else None
+        found = extract_card(img) if detect else None
         images[card.id] = found[0] if found else img
     index = FingerprintIndex.from_images(images)
-    out = _index_path(args.catalog)
+    out = _index_path(catalog_path)
     index.save(out)
     print(f"Indexed {len(index)} cards -> {out}")
     if missing:
         print(f"{len(missing)} cards have no readable image (e.g. {', '.join(missing[:5])})")
+    return index
+
+
+def cmd_index(args):
+    build_index(args.catalog, args.detect)
+
+
+def save_reference(catalog: Catalog, catalog_path: str | Path, card_id: str, warped, **fields) -> Card:
+    """Store a flattened card photo as the reference image for `card_id`."""
+    safe = re.sub(r"[^\w.-]+", "_", card_id)
+    rel = f"images/{safe}.png"
+    (catalog.root / "images").mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(catalog.root / rel), warped)
+    card = catalog.get(card_id) or Card(card_id, {})
+    card.fields.update({k: v for k, v in fields.items() if v not in (None, "")})
+    card.fields["image"] = rel
+    catalog.add(card)
+    catalog.save(catalog_path)
+    return card
+
+
+def cmd_enroll(args):
+    path = Path(args.catalog)
+    if path.exists():
+        catalog = Catalog.load(path)
+    else:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        catalog = Catalog([], path.parent)
+    # Cards already listed in the catalog but without a photo are asked for in order.
+    todo = [c for c in catalog.cards.values()
+            if not (catalog.image_path(c) and catalog.image_path(c).exists())]
+
+    cap = cv2.VideoCapture(args.camera)
+    if not cap.isOpened():
+        sys.exit(f"Can't open camera {args.camera}")
+    print("Hold one card flat in view. SPACE captures, S skips (listed cards), Q finishes.")
+    added = 0
+    try:
+        while True:
+            want = todo[0] if todo else None
+            ok, frame = cap.read()
+            if not ok:
+                break
+            found = extract_card(frame)
+            prompt = f"Show: {want.name} ({want.id})" if want else "Show any card, SPACE to capture"
+            _overlay(frame, found[1] if found else None,
+                     prompt if found else prompt + "  [no card found]",
+                     (80, 220, 80) if found else (60, 60, 230))
+            cv2.imshow("SortBuddy enroll", frame)
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord("q"):
+                break
+            if key == ord("s") and want:
+                todo.pop(0)
+            if key != ord(" "):
+                continue
+            if not found:
+                print("No card found in that frame; adjust the card or lighting and try again.")
+                continue
+            if want:
+                save_reference(catalog, path, want.id, found[0])
+                todo.pop(0)
+                print(f"Saved {want.id}")
+            else:
+                card_id = input("Card id (e.g. OGN-042, blank to discard): ").strip()
+                if not card_id:
+                    continue
+                name = input("Name (optional): ").strip()
+                save_reference(catalog, path, card_id, found[0], name=name)
+                print(f"Saved {card_id}")
+            added += 1
+    finally:
+        cap.release()
+        cv2.destroyAllWindows()
+    print(f"Captured {added} card(s) into {path}")
+    if len(catalog):
+        build_index(str(path))
+    print("Fill in fields like set, cost, domain, rarity in the catalog to sort on them.")
 
 
 def cmd_identify(args):
@@ -222,6 +302,11 @@ def main(argv=None):
     p.add_argument("catalog")
     p.add_argument("--detect", action="store_true", help="reference images are photos; find the card in each")
     p.set_defaults(fn=cmd_index)
+
+    p = sub.add_parser("enroll", help="photograph your own cards with the webcam as references")
+    p.add_argument("catalog", help="catalog .csv or .json (created if missing)")
+    p.add_argument("--camera", type=int, default=0)
+    p.set_defaults(fn=cmd_enroll)
 
     def add_decision(p):
         p.add_argument("--rule", help='yes/no rule, e.g. "cost <= 3"')

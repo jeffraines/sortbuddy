@@ -119,3 +119,28 @@ def test_export(demo, tmp_path):
     lines = out.read_text().splitlines()
     assert lines[0] == "id,name,set,number,rarity,quantity"
     assert lines[1].startswith("DEMO-001,Demo Card 1,DEMO,1,") and lines[1].endswith(",2")
+
+
+def test_enroll_from_webcam_photos_then_identify(demo, tmp_path):
+    """References taken with the webcam itself (no official images) work too."""
+    from sortbuddy.cli import build_index, save_reference
+
+    _, demo_catalog, _ = demo
+    path = tmp_path / "mycards.csv"
+    mine = Catalog([], tmp_path)
+    rng = random.Random(9)
+    originals = {}
+    for card in list(demo_catalog.cards.values())[:12]:
+        img = cv2.imread(str(demo_catalog.image_path(card)))
+        originals[card.id] = img
+        warped, _ = extract_card(fake_photo(img, rng))
+        save_reference(mine, path, card.id, warped, name=card.name, cost=card.get("cost"))
+
+    reloaded = Catalog.load(path)
+    assert len(reloaded) == 12 and reloaded["DEMO-001"].get("cost") == demo_catalog["DEMO-001"].get("cost")
+
+    index = build_index(str(path))
+    for card_id, img in originals.items():
+        warped, _ = extract_card(fake_photo(img, rng, upside_down=True))
+        m = index.match(warped)
+        assert m.card_id == card_id and m.confident(MAX_DISTANCE, MIN_MARGIN), (card_id, m)

@@ -56,6 +56,9 @@ class Catalog:
         self.cards = {c.id: c for c in cards}
         self.root = root or Path(".")
 
+    def add(self, card: Card) -> None:
+        self.cards[card.id] = card
+
     def __len__(self) -> int:
         return len(self.cards)
 
@@ -84,7 +87,8 @@ class Catalog:
         path = Path(path)
         if path.suffix.lower() == ".csv":
             with path.open(newline="", encoding="utf-8") as f:
-                rows = [{k: _coerce(v) for k, v in r.items() if v != ""} for r in csv.DictReader(f)]
+                rows = [{k: (v.strip() if k == "id" else _coerce(v)) for k, v in r.items() if v != ""}
+                        for r in csv.DictReader(f)]
         else:
             rows = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(rows, dict):
@@ -95,3 +99,18 @@ class Catalog:
             card_id = str(r.pop("id"))
             cards.append(Card(card_id, r))
         return cls(cards, path.parent)
+
+    def save(self, path: str | Path) -> None:
+        path = Path(path)
+        rows = [{"id": c.id, **c.fields} for c in self.cards.values()]
+        if path.suffix.lower() == ".csv":
+            columns = ["id"]
+            for r in rows:
+                columns += [k for k in r if k not in columns]
+            with path.open("w", newline="", encoding="utf-8") as f:
+                w = csv.DictWriter(f, columns)
+                w.writeheader()
+                for r in rows:
+                    w.writerow({k: "|".join(map(str, v)) if isinstance(v, list) else v for k, v in r.items()})
+        else:
+            path.write_text(json.dumps(rows, indent=2), encoding="utf-8")

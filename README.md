@@ -47,16 +47,43 @@ NO-pile-then-YES-pile and run it again.
 The sort is stable, so sorting by cost and then by domain gives you cards
 grouped by domain with cost in order within each group.
 
-## Try it
+## Try it with your own cards (Windows + USB webcam)
+
+Any standard USB webcam (e.g. a Logitech C270/C920) works.
+
+```powershell
+# Python 3.10+ from python.org, then in the repo folder:
+py -m venv .venv
+.venv\Scripts\activate
+pip install -e .
+
+# 1. Photograph some of your cards as references. A window opens:
+#    hold a card flat, press SPACE, type its id and name in the terminal.
+sortbuddy enroll mycards\catalog.csv
+#    (If it opens the wrong camera, add --camera 1.)
+
+# 2. Open mycards\catalog.csv in a spreadsheet and fill in columns
+#    such as set, cost, domain, rarity. Use | for multiple values: fury|chaos
+
+# 3. Sort:
+sortbuddy scan mycards\catalog.csv --rule "cost <= 3"
+```
+
+You need **one photo per distinct card**, not per copy. A dozen cards is
+enough to see it working. To sort a whole set you need one of each card in
+that set. A card it has no reference for should show as not found rather than
+being given a YES/NO, but check this with your own cards.
+
+If you already have a list of cards (e.g. exported from an API) in the CSV
+before you start, `enroll` walks through the cards that have no photo yet
+and asks for each one by name, so you don't type anything.
+
+### More commands
 
 ```sh
-pip install -e .                 # Python 3.10+, numpy, opencv-python
-
-sortbuddy demo demo/             # 24 fake cards + catalog, for playing with
+sortbuddy demo demo/             # 24 fake cards + catalog, no real cards needed
 sortbuddy index demo/catalog.json
 
-# Hold cards (or demo images on your phone screen) up to the webcam:
-sortbuddy scan demo/catalog.json --rule "cost <= 3"
 sortbuddy scan demo/catalog.json --rule "domain has fury or rarity in rare,epic"
 
 # Full sort by domain:
@@ -78,27 +105,30 @@ Tips for the webcam:
   (light mat for black-bordered cards, dark mat otherwise).
 - Diffuse light from above; glare on foils is the main thing that confuses it.
 - Fill a decent part of the frame with the card. Fingers on the edge are fine.
+- Enroll and scan with the same camera and lighting. Matching works best
+  when reference photos look like what it sees while sorting.
 
-## Using real cards
+## What the sorter actually stores
 
-You need a catalog and a reference image for each card:
+Reference images are only needed when building the index. Matching uses
+the index: one 256-bit fingerprint (32 bytes) per card, which can't be
+turned back into the picture. A finished device would ship the
+fingerprints plus the card facts it sorts on (set, number, cost, domain,
+rarity), not card art. Where those facts come from, and the terms
+attached to that source, still needs checking before anything is sold.
 
-```json
-[
-  {"id": "OGN-001", "name": "...", "set": "OGN", "number": 1,
-   "domain": ["fury"], "cost": 2, "rarity": "common",
-   "image": "images/OGN-001.png"}
-]
+Catalog format (CSV or JSON). Any field you add can be used in rules and
+sort plans:
+
+```csv
+id,name,set,number,domain,cost,rarity,image
+OGN-001,Some Card,OGN,1,fury,2,common,images/OGN-001.png
+OGN-002,Other Card,OGN,2,fury|chaos,5,rare,images/OGN-002.png
 ```
 
-CSV works too (`|` separates list values). Any field you add can be used in
-rules and sort plans. Then `sortbuddy index catalog.json` once, and scan.
-
-Reference images can be official card-gallery images. If you only have
-photos, `sortbuddy index catalog.json --detect` crops the card out of each.
-
-Building a real Riftbound catalog (and an importer for whatever source has
-the data) is the next step; see the roadmap in the design doc.
+Reference images can be your own webcam photos (`enroll`) or existing
+scans. If you have photos with background around the card,
+`sortbuddy index catalog.csv --detect` crops the card out of each.
 
 ## Tests
 
