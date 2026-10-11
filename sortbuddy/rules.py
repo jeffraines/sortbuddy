@@ -7,11 +7,13 @@ each card. Rules are small expressions over catalog fields:
     cost <= 3
     rarity in rare,epic
     domain has fury
+    text contains draw a card
     set == OGN and rarity != common
     domain has fury or domain has calm
 
 String comparisons are case-insensitive. `has` checks membership in a
-list-valued field (a card with domains [fury, chaos] "has fury"). `and`
+list-valued field (a card with domains [fury, chaos] "has fury");
+`contains` matches part of the text ("text contains flash"). `and`
 binds tighter than `or`. No parentheses: if you need them, do two passes.
 """
 
@@ -22,7 +24,7 @@ from dataclasses import dataclass
 
 from .catalog import Card, _coerce
 
-_CLAUSE = re.compile(r"^\s*([A-Za-z_][\w.]*)\s*(<=|>=|!=|==|=|<|>|\bin\b|\bhas\b)\s*(.+?)\s*$")
+_CLAUSE = re.compile(r"^\s*([A-Za-z_][\w.]*)\s*(<=|>=|!=|==|=|<|>|\bin\b|\bhas\b|\bcontains\b)\s*(.+?)\s*$")
 
 
 class RuleError(ValueError):
@@ -43,6 +45,9 @@ class Clause:
         actual = card.get(self.field)
         if actual is None:
             return self.op == "!="
+        if self.op == "contains":
+            items = actual if isinstance(actual, list) else [actual]
+            return any(str(self.value).lower() in str(x).lower() for x in items)
         if self.op == "has":
             items = actual if isinstance(actual, list) else [actual]
             return _norm(self.value) in [_norm(x) for x in items]

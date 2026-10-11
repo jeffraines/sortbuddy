@@ -64,7 +64,7 @@ def make_demo(out_dir: str | Path, n: int = 24, seed: int = 7) -> Path:
             "rarity": rng.choice(RARITIES),
             "image": f"images/DEMO-{i:03d}.png",
         }
-        cv2.imwrite(str(out / card["image"]), render_card(seed * 1000 + i, domain, card["name"], f"DEMO {i:03d}/{n}"))
+        cv2.imwrite(str(out / card["image"]), render_card(seed * 1000 + i, domain, card["name"], f"DEMO - {i:03d}/{n}"))
         cards.append(card)
     path = out / "catalog.json"
     path.write_text(json.dumps(cards, indent=2), encoding="utf-8")

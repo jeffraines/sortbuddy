@@ -16,13 +16,15 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
-from . import cli
+from . import cli, lookup
 from .catalog import Catalog
 
 SETTINGS = Path.home() / ".sortbuddy-gui.json"
 DEFAULTS = {"catalog": str(Path("mycards") / "catalog.csv"), "camera": 0, "focus": "",
-            "rule": "cost <= 3"}
-RULE_EXAMPLES = "e.g.  cost <= 3   ·   domain has fury   ·   rarity in rare,epic   ·   set == OGN and cost > 4"
+            "rule": "cost <= 3", "lookup": ""}
+NO_LOOKUP = "None (fill in details yourself)"
+RULE_EXAMPLES = ("e.g.  cost <= 3  ·  colors has blue  ·  rarity in rare,mythic  ·  price >= 1  ·  "
+                 "subtypes has wizard  ·  text contains draw a card")
 
 
 class LogWriter:
@@ -50,7 +52,7 @@ class App:
     def __init__(self, root: tk.Tk):
         self.root = root
         root.title("SortBuddy")
-        root.minsize(620, 520)
+        root.minsize(760, 540)
         self.settings = self._load_settings()
 
         pad = {"padx": 8, "pady": 4}
@@ -88,6 +90,12 @@ class App:
         self.enroll_btn = ttk.Button(row, text="Add cards…", command=self.enroll)
         self.enroll_btn.pack(side="left")
         ttk.Button(row, text="Open card list in Excel", command=self.open_catalog).pack(side="left", padx=8)
+        ttk.Label(row, text="Card details from").pack(side="left", padx=(16, 4))
+        self.lookup_names = {NO_LOOKUP: "", **{label: key for key, (label, _) in lookup.SOURCES.items()}}
+        current = next((k for k, v in self.lookup_names.items() if v == self.settings.get("lookup")), NO_LOOKUP)
+        self.lookup_var = tk.StringVar(value=current)
+        ttk.Combobox(row, textvariable=self.lookup_var, values=list(self.lookup_names),
+                     state="readonly", width=30).pack(side="left")
         ttk.Label(frm, text="SPACE capture · ENTER save · TAB next name · E type · ESC discard · Q done",
                   foreground="#666").grid(row=5, column=0, columnspan=3, sticky="w", padx=8)
 
@@ -123,7 +131,8 @@ class App:
 
     def _save_settings(self) -> None:
         data = {"catalog": self.catalog_var.get(), "camera": self._camera(),
-                "focus": self.focus_var.get().strip(), "rule": self.rule_var.get()}
+                "focus": self.focus_var.get().strip(), "rule": self.rule_var.get(),
+                "lookup": self.lookup_names.get(self.lookup_var.get(), "")}
         try:
             SETTINGS.write_text(json.dumps(data, indent=2), encoding="utf-8")
         except OSError:
@@ -219,7 +228,9 @@ class App:
 
     def enroll(self) -> None:
         try:
-            self.run(["enroll", self.catalog_var.get(), *self._camera_args()])
+            source = self.lookup_names.get(self.lookup_var.get(), "")
+            self.run(["enroll", self.catalog_var.get(), *self._camera_args(),
+                      *(["--lookup", source] if source else [])])
         except ValueError as e:
             messagebox.showerror("SortBuddy", str(e))
 

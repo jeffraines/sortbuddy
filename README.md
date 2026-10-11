@@ -126,6 +126,29 @@ Tips for the webcam:
 - Enroll and scan with the same camera and lighting. Matching works best
   when reference photos look like what it sees while sorting.
 
+## Magic cards: details filled in automatically
+
+Choose **Card details from: Magic: The Gathering (Scryfall)** in the app
+(or `sortbuddy enroll ... --lookup mtg`). After OCR reads the name and the
+set/number in the bottom-left corner, SortBuddy looks the card up on
+[Scryfall](https://scryfall.com) and saves everything sortable:
+
+| Field | Example (Divining Duelist) | Rule example |
+|---|---|---|
+| `set`, `set_name`, `number` | FRA, Reality Fracture, 29 | `set == FRA` |
+| `rarity` | common | `rarity in rare,mythic` |
+| `cost`, `mana_cost` | 3, {2}{U} | `cost <= 3` |
+| `colors`, `color_identity` | blue | `colors has blue` |
+| `card_types`, `subtypes`, `type` | Creature; Merfolk, Wizard | `subtypes has wizard` |
+| `power`, `toughness` | 3, 2 | `power >= 3` |
+| `keywords`, `text` | Flash; rules text | `keywords has flash`, `text contains draw a card` |
+| `artist`, `year` | David Auden Nash, 2026 | `year >= 2020` |
+| `price`, `price_foil` | 0.25, 0.38 (USD, when enrolled) | `price >= 1` |
+
+If the set code couldn't be read, the card is found by name and the window
+says so; check it's the right printing before saving. Only enrolling uses
+the internet; sorting never does.
+
 ## What the sorter actually stores
 
 Reference images are only needed when building the index. Matching uses

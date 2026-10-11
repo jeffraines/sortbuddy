@@ -197,3 +197,59 @@ def test_enroll_flow_reads_names_and_saves(demo, tmp_path, monkeypatch):
     assert sorted(cat.cards) == ["DEMO-003", "DEMO-007"]
     assert cat["DEMO-003"].name == "Demo Card 3" and cat["DEMO-003"].get("number") == 3
     assert (tmp_path / cat["DEMO-007"].get("image")).exists()
+
+
+def test_collector_info_ignores_flavor_text_and_power_toughness():
+    """Text lines as read off a real Magic card (Divining Duelist, FRA #29)."""
+    from sortbuddy.ocr import Line, _collector
+
+    def at(text, x, y, h=18, w=200):
+        return Line(text, 0.9, x, y, x + w, y + h)
+
+    w, h = 630, 880
+    lines = [
+        at("Divining Duelist", 40, 40, 34, 300),
+        at("Creature — Merfolk Wizard", 40, 470),
+        at("They weren't clever then either.”", 40, 760),
+        at("3/2", 470, 770, 30, 60),
+        at("C 0029", 20, 835),
+        at("FRA • EN", 20, 855),
+        at("DAVID AUDEN NASH", 90, 855),
+        at("™ & © 2026 Wizards of the Coast", 330, 860),
+    ]
+    assert _collector(lines, h, w) == ("FRA", 29)
+    # Riftbound-style, including OCR dropping the space before the number.
+    assert _collector([at("OGN • 029/298", 20, 850)], h, w) == ("OGN", 29)
+    assert _collector([at("OGN029/298", 20, 850)], h, w) == ("OGN", 29)
+
+
+SCRYFALL_DUELIST = {
+    "object": "card", "name": "Divining Duelist", "set": "fra", "set_name": "Reality Fracture",
+    "collector_number": "29", "mana_cost": "{2}{U}", "cmc": 3.0, "colors": ["U"], "color_identity": ["U"],
+    "rarity": "common", "type_line": "Creature — Merfolk Wizard", "power": "3", "toughness": "2",
+    "keywords": ["Flash"], "oracle_text": "Flash\nDraw a card, then discard a card.",
+    "artist": "David Auden Nash", "released_at": "2026-10-02", "prices": {"usd": "0.25", "usd_foil": "0.38"},
+}
+
+
+def test_scryfall_lookup_fields(monkeypatch):
+    from sortbuddy import lookup
+
+    calls = []
+
+    def fake_get(url):
+        calls.append(url)
+        if "&set=" in url and "set=fra" not in url:
+            return None  # Scryfall has no set "they"
+        return SCRYFALL_DUELIST if "/fra/29" in url or "fuzzy=Divining" in url else None
+
+    monkeypatch.setattr(lookup, "_get", fake_get)
+    fields, confirmed = lookup.scryfall("Divining Duelist", "FRA", 29)
+    assert confirmed and lookup.card_id(fields) == "FRA-029"
+    card = Card("FRA-029", fields)
+    for rule in ["colors has blue", "cost <= 3", "subtypes has wizard", "keywords has flash",
+                 "text contains draw a card", "card_types has creature and power >= 3", "price < 1"]:
+        assert Rule(rule)(card), rule
+    # OCR misread the set: found by name, flagged as unconfirmed printing.
+    fields, confirmed = lookup.scryfall("Divining Duelist", "THEY", 3)
+    assert not confirmed and fields["set"] == "FRA"

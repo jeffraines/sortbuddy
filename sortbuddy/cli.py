@@ -22,7 +22,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from . import ocr
+from . import lookup, ocr
 from .camera import Camera, open_camera, overlay, show
 from .catalog import Card, Catalog, _coerce
 from .demo import make_demo
@@ -152,43 +152,84 @@ def _next_auto_id(catalog: Catalog) -> str:
     return f"card-{n:03d}"
 
 
-def _confirm(catalog: Catalog, card_img, text, auto_id: str):
+def _lookup(source, name: str, set_code, number):
+    """Returns (fields, status line, status color)."""
+    if source is None:
+        return None, "", None
+    try:
+        found = source(name, set_code, number)
+    except lookup.LookupError_ as e:
+        return None, f"Lookup failed: {e}", (60, 60, 230)
+    if not found:
+        return None, "Not found in the card database", (0, 200, 255)
+    fields, confirmed = found
+    if confirmed:
+        return fields, f"Found: {fields.get('set_name', fields['set'])} #{fields['number']}", (80, 220, 80)
+    return fields, "Found by name only: check the set/number", (0, 200, 255)
+
+
+def _confirm(catalog: Catalog, card_img, text, auto_id: str, source=None):
     """Show what was read off the card; returns (card_id, fields) or None.
 
-    ENTER saves, TAB tries the next text line as the name, E types it in the
-    terminal instead, ESC throws the capture away.
+    ENTER saves, TAB tries the next text line as the name, E types it in
+    instead, ESC throws the capture away. With a lookup `source`, the card's
+    details come from the card database.
     """
     names = (text.names if text else []) or [""]
+    set_code = text.set_code if text else None
+    number = text.number if text else None
+    looked_up: dict[str, tuple] = {}
     i = 0
+    typed_id = None
     while True:
         name = names[i]
-        if text and text.set_code and text.number is not None:
-            card_id = text.card_id()
-        elif name:
-            card_id = re.sub(r"[^A-Za-z0-9]+", "-", name).strip("-").lower() or auto_id
+        if name not in looked_up:
+            looked_up[name] = _lookup(source, name, set_code, number) if (name or set_code) else (None, "", None)
+        info, status, status_color = looked_up[name]
+        if info:
+            fields = dict(info)
+            card_id = lookup.card_id(info)
         else:
-            card_id = auto_id
+            fields = {"name": name}
+            if set_code:
+                fields["set"] = set_code
+            if number is not None:
+                fields["number"] = number
+            if set_code and number is not None:
+                card_id = f"{set_code}-{number:03d}"
+            elif name:
+                card_id = re.sub(r"[^A-Za-z0-9]+", "-", name).strip("-").lower() or auto_id
+            else:
+                card_id = auto_id
+        card_id = typed_id or card_id
+
         h = 640
         img = cv2.resize(card_img, (int(card_img.shape[1] * h / card_img.shape[0]), h))
-        panel = np.zeros((h, 620, 3), np.uint8)
-        rows = [
-            ("Name:  " + (name or "(none read)"), (255, 255, 255)),
-            ("Id:    " + card_id, (255, 255, 255)),
-            ("Set:   " + str(text.set_code if text and text.set_code else "-")
-             + "    #: " + str(text.number if text and text.number is not None else "-"), (200, 200, 200)),
-            ("", None),
-            ("ENTER  save", (80, 220, 80)),
-            (f"TAB    next guess for name ({i + 1}/{len(names)})", (200, 200, 200)),
-            ("E      type it in the terminal", (200, 200, 200)),
-            ("ESC    discard", (60, 60, 230)),
-        ]
+        panel = np.zeros((h, 680, 3), np.uint8)
+        white, grey = (255, 255, 255), (200, 200, 200)
+        rows = [("Name:  " + (fields.get("name") or "(none read)"), white),
+                ("Id:    " + card_id, white)]
+        if status:
+            rows.append((status, status_color))
+        if info:
+            colors = "/".join(info.get("colors", []))
+            price = f"${info['price']}" if "price" in info else ""
+            rows.append((f"{info.get('mana_cost', '')}  cost {info.get('cost', '')}  {colors}  {info.get('rarity', '')}  {price}", grey))
+            rows.append((info.get("type", "")[:42], grey))
+        else:
+            rows.append(("Set: " + str(set_code or "-") + "    #: " + str(number if number is not None else "-"), grey))
+        rows += [("", None),
+                 ("ENTER  save", (80, 220, 80)),
+                 (f"TAB    next guess for name ({i + 1}/{len(names)})", grey),
+                 ("E      type it in", grey),
+                 ("ESC    discard", (60, 60, 230))]
         if card_id in catalog.cards:
             rows.append(("Already enrolled: ENTER replaces its photo", (0, 200, 255)))
         if text is None:
             rows.insert(0, ("(no OCR: pip install rapidocr_onnxruntime)", (0, 200, 255)))
         for r, (line, color) in enumerate(rows):
             if color:
-                cv2.putText(panel, line, (16, 50 + 44 * r), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+                cv2.putText(panel, line, (16, 46 + 42 * r), cv2.FONT_HERSHEY_SIMPLEX, 0.65, color, 2)
         cv2.imshow("SortBuddy enroll", np.hstack([img, panel]))
         key = cv2.waitKey(30) & 0xFF
         if tick:
@@ -201,14 +242,15 @@ def _confirm(catalog: Catalog, card_img, text, auto_id: str):
             i = (i + 1) % len(names)
         if key == ord("e"):
             print("(Leave blank to keep what's in brackets.)")
-            card_id = (ask(f"Card id [{card_id}]: ") or "").strip() or card_id
-            name = (ask(f"Name [{name}]: ") or "").strip() or name
+            new_name = (ask(f"Name [{fields.get('name', '')}]: ") or "").strip()
+            if new_name and new_name != name:
+                # Look the typed name up too; the next pass shows the result.
+                names.insert(i + 1, new_name)
+                i += 1
+                continue
+            typed_id = (ask(f"Card id [{card_id}]: ") or "").strip() or None
+            card_id = typed_id or card_id
             break
-    fields = {"name": name}
-    if text and text.set_code:
-        fields["set"] = text.set_code
-    if text and text.number is not None:
-        fields["number"] = text.number
     return card_id, fields
 
 
@@ -226,6 +268,9 @@ def cmd_enroll(args):
     if not todo and not args.no_ocr and not use_ocr:
         print("Tip: pip install rapidocr_onnxruntime to have card names read automatically.")
 
+    source = lookup.SOURCES[args.lookup][1] if args.lookup else None
+    if source:
+        print(f"Card details from: {lookup.SOURCES[args.lookup][0]}")
     cam = open_camera(args.camera, args.focus)
     print("Hold one card flat in view. SPACE captures, S skips (listed cards), Q finishes.")
     added = 0
@@ -266,7 +311,7 @@ def cmd_enroll(args):
                 if use_ocr:
                     text = ocr.read_card(card_img)
                     card_img = text.upright
-                result = _confirm(catalog, card_img, text, _next_auto_id(catalog))
+                result = _confirm(catalog, card_img, text, _next_auto_id(catalog), source)
                 if result:
                     card_id, fields = result
                     save_reference(catalog, path, card_id, card_img, **fields)
@@ -415,6 +460,8 @@ def main(argv=None):
     p.add_argument("--camera", type=int, default=0)
     p.add_argument("--focus", type=int, help="manual focus 0-255 (default: autofocus)")
     p.add_argument("--no-ocr", action="store_true", help="don't read names off cards")
+    p.add_argument("--lookup", choices=sorted(lookup.SOURCES),
+                   help="fill in card details from an online database (mtg = Scryfall)")
     p.set_defaults(fn=cmd_enroll)
 
     def add_decision(p):

@@ -86,33 +86,64 @@ def _read(img: np.ndarray) -> list[Line]:
     return lines
 
 
-# "029/298", "29 / 298"
-_FRACTION = re.compile(r"(\d{1,4})\s*/\s*\d{1,4}")
-# "C 0029", "0029", "R029": a rarity letter followed by the number
-_NUMBER = re.compile(r"(?:^|\s|[A-Z])(\d{2,4})(?:\s|$)")
-# 3-4 character set codes: FDN, OGN, SFD, BLB, M21... ("EN" etc. are language codes)
+# Collector info sits in the bottom-left corner on Magic, Riftbound and
+# Pokemon cards, e.g. Magic "C 0029" / "FRA • EN", Riftbound "OGN • 029/298".
+# The same corner can also hold flavor text, the artist and the copyright
+# line, and power/toughness ("3/2") sits just right of it, so each guess is
+# scored rather than taking the first match.
+
+# "029/298", "29 / 298" (but not a power/toughness like "3/2")
+_FRACTION = re.compile(r"(?<!\d)(\d{1,4})\s*/\s*(\d{1,4})(?!\d)")
+# "C 0029", "0029", "R029": an optional rarity letter, then the number
+_NUMBER = re.compile(r"(?:^|\s|(?<=[A-Z]))(\d{2,4})(?=\s|$)")
+# 3-4 character set codes: FRA, FDN, OGN, SFD, M21... Matched case-sensitively:
+# set codes are printed in capitals, sentence words like "They" aren't.
 # (OCR often drops the space before the number: "OGN029/298")
-_SET = re.compile(r"(?<![A-Z0-9])([A-Z][A-Z0-9]{2,3})(?![A-Z])")
-_NOT_SETS = {"EN", "JP", "TM", "THE", "AND", "LLC", "INC"}
+_SET = re.compile(r"(?<![A-Za-z0-9])([A-Z][A-Z0-9]{2,3})(?![A-Za-z])")
+_LANGUAGE = re.compile(r"(?<![A-Z])(EN|JP|JA|DE|FR|ES|IT|PT|KO|ZH|RU|CN)(?![A-Z])")
+_NOT_SETS = {"THE", "AND", "LLC", "INC", "TM"}
 
 
-def _collector(lines: list[Line], card_h: int) -> tuple[str | None, int | None]:
-    bottom = [ln for ln in lines if ln.y0 > 0.85 * card_h]
-    set_code = number = None
-    for ln in bottom:
-        text = ln.text.upper().replace("•", " ").replace("·", " ")
-        if number is None:
-            m = _FRACTION.search(text) or _NUMBER.search(" " + text + " ")
-            if m:
-                number = int(m.group(1))
-        if set_code is None:
-            for code in _SET.findall(text):
-                if sum(c.isalpha() for c in code) >= 2:
-                    code = code[0] + code[1:].replace("0", "O")  # OCR reads O as zero
-                if code not in _NOT_SETS:
-                    set_code = code
-                    break
-    return set_code, number
+def _is_prose(text: str) -> bool:
+    """Flavor text, artist credits, copyright: not collector info."""
+    letters = [c for c in text if c.isalpha()]
+    lower = sum(c.islower() for c in letters)
+    return "©" in text or (len(letters) > 3 and lower > 0.4 * len(letters))
+
+
+def _collector(lines: list[Line], card_h: int, card_w: int) -> tuple[str | None, int | None]:
+    corner = [ln for ln in lines
+              if ln.y0 > 0.85 * card_h and ln.x0 < 0.5 * card_w and not _is_prose(ln.text)]
+    best_set, best_score = None, 0
+    numbers: list[tuple[int, int]] = []  # (priority, number)
+    for ln in corner:
+        text = ln.text.replace("•", " ").replace("·", " ")
+        words = len(re.findall(r"[A-Za-z]{2,}", text))
+        has_lang = bool(_LANGUAGE.search(text))
+
+        for m in _FRACTION.finditer(text):
+            if len(m.group(1)) >= 2 or len(m.group(2)) >= 2:
+                numbers.append((0, int(m.group(1))))
+        for m in _NUMBER.finditer(text):
+            digits = m.group(1)
+            if not (1990 <= int(digits) <= 2099 and len(digits) == 4):  # not a year
+                numbers.append((1 if digits.startswith("0") else 2, int(digits)))
+
+        for m in _SET.finditer(text):
+            code = m.group(1)
+            if code.endswith("0") and text[m.end():m.end() + 1].isdigit():
+                code = code[:-1]  # "OGN029/298": that 0 starts the number
+            if len(code) < 3:
+                continue
+            if sum(c.isalpha() for c in code) >= 2:
+                code = code[0] + code[1:].replace("0", "O")  # OCR reads O as zero
+            if code in _NOT_SETS or _LANGUAGE.fullmatch(code):
+                continue
+            score = 1 + 3 * has_lang + (len(code) == 3) + 2 * bool(re.search(r"\d{2,}", text)) - 2 * (words >= 3)
+            if score > best_score:
+                best_set, best_score = code, score
+    number = min(numbers)[1] if numbers else None
+    return best_set, number
 
 
 def _respace(text: str) -> str:
@@ -149,6 +180,6 @@ def read_card(card: np.ndarray) -> CardText:
         score = sum(ln.score * len(ln.text) for ln in lines)
         if score > best_score:
             best, best_score, best_img = lines, score, img
-    h = best_img.shape[0]
-    set_code, number = _collector(best, h)
+    h, w = best_img.shape[:2]
+    set_code, number = _collector(best, h, w)
     return CardText(_name_candidates(best, h), set_code, number, best, best_img)
