@@ -20,7 +20,10 @@ import time
 from pathlib import Path
 
 import cv2
+import numpy as np
 
+from . import ocr
+from .camera import Camera, open_camera, overlay, show
 from .catalog import Card, Catalog, _coerce
 from .demo import make_demo
 from .fingerprint import FingerprintIndex
@@ -33,21 +36,6 @@ MAX_DISTANCE = 60  # out of 256 bits
 MIN_MARGIN = 8
 
 
-def open_camera(index: int, quiet: bool = False):
-    """Open a webcam. On Windows, use DirectShow: OpenCV's default (Media
-    Foundation) can hang forever opening some USB webcams."""
-    if not quiet:
-        print(f"Opening camera {index}...", flush=True)
-    backend = cv2.CAP_DSHOW if sys.platform == "win32" else cv2.CAP_ANY
-    cap = cv2.VideoCapture(index, backend)
-    if not cap.isOpened():
-        cap.release()
-        if quiet:
-            return None
-        sys.exit(f"Can't open camera {index}. Try another --camera number, or run: sortbuddy cameras")
-    return cap
-
-
 def cmd_cameras(args):
     try:  # probing missing indexes makes OpenCV log a wall of warnings
         cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_SILENT)
@@ -55,13 +43,12 @@ def cmd_cameras(args):
         pass
     found = 0
     for i in range(args.max):
-        cap = open_camera(i, quiet=True)
-        if cap is None:
+        cam = Camera(i, quiet=True)
+        if not cam.ok:
             continue
-        ok, frame = cap.read()
-        cap.release()
-        size = f"{frame.shape[1]}x{frame.shape[0]}" if ok else "opened, but no picture"
-        print(f"--camera {i}: {size}")
+        ok, _ = cam.read()
+        print(f"--camera {i}: {cam.size}" + ("" if ok else " (opened, but no picture)"))
+        cam.release()
         found += 1
     if not found:
         print("No cameras found. Is the webcam plugged in and not in use by another app?")
@@ -153,6 +140,71 @@ def save_reference(catalog: Catalog, catalog_path: str | Path, card_id: str, war
     return card
 
 
+def _next_auto_id(catalog: Catalog) -> str:
+    n = 1
+    while f"card-{n:03d}" in catalog.cards:
+        n += 1
+    return f"card-{n:03d}"
+
+
+def _confirm(catalog: Catalog, card_img, text, auto_id: str):
+    """Show what was read off the card; returns (card_id, fields) or None.
+
+    ENTER saves, TAB tries the next text line as the name, E types it in the
+    terminal instead, ESC throws the capture away.
+    """
+    names = (text.names if text else []) or [""]
+    i = 0
+    while True:
+        name = names[i]
+        if text and text.set_code and text.number is not None:
+            card_id = text.card_id()
+        elif name:
+            card_id = re.sub(r"[^A-Za-z0-9]+", "-", name).strip("-").lower() or auto_id
+        else:
+            card_id = auto_id
+        h = 640
+        img = cv2.resize(card_img, (int(card_img.shape[1] * h / card_img.shape[0]), h))
+        panel = np.zeros((h, 620, 3), np.uint8)
+        rows = [
+            ("Name:  " + (name or "(none read)"), (255, 255, 255)),
+            ("Id:    " + card_id, (255, 255, 255)),
+            ("Set:   " + str(text.set_code if text and text.set_code else "-")
+             + "    #: " + str(text.number if text and text.number is not None else "-"), (200, 200, 200)),
+            ("", None),
+            ("ENTER  save", (80, 220, 80)),
+            (f"TAB    next guess for name ({i + 1}/{len(names)})", (200, 200, 200)),
+            ("E      type it in the terminal", (200, 200, 200)),
+            ("ESC    discard", (60, 60, 230)),
+        ]
+        if card_id in catalog.cards:
+            rows.append(("Already enrolled: ENTER replaces its photo", (0, 200, 255)))
+        if text is None:
+            rows.insert(0, ("(no OCR: pip install rapidocr_onnxruntime)", (0, 200, 255)))
+        for r, (line, color) in enumerate(rows):
+            if color:
+                cv2.putText(panel, line, (16, 50 + 44 * r), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+        cv2.imshow("SortBuddy enroll", np.hstack([img, panel]))
+        key = cv2.waitKey(30) & 0xFF
+        if key == 13:
+            break
+        if key == 27:
+            return None
+        if key == 9:
+            i = (i + 1) % len(names)
+        if key == ord("e"):
+            print("(Leave blank to keep what's in brackets.)")
+            card_id = input(f"Card id [{card_id}]: ").strip() or card_id
+            name = input(f"Name [{name}]: ").strip() or name
+            break
+    fields = {"name": name}
+    if text and text.set_code:
+        fields["set"] = text.set_code
+    if text and text.number is not None:
+        fields["number"] = text.number
+    return card_id, fields
+
+
 def cmd_enroll(args):
     path = Path(args.catalog)
     if path.exists():
@@ -163,25 +215,30 @@ def cmd_enroll(args):
     # Cards already listed in the catalog but without a photo are asked for in order.
     todo = [c for c in catalog.cards.values()
             if not (catalog.image_path(c) and catalog.image_path(c).exists())]
+    use_ocr = not todo and not args.no_ocr and ocr.available()
+    if not todo and not args.no_ocr and not use_ocr:
+        print("Tip: pip install rapidocr_onnxruntime to have card names read automatically.")
 
-    cap = open_camera(args.camera)
+    cam = open_camera(args.camera, args.focus)
     print("Hold one card flat in view. SPACE captures, S skips (listed cards), Q finishes.")
     added = 0
     try:
         while True:
             want = todo[0] if todo else None
-            ok, frame = cap.read()
+            ok, frame = cam.read()
             if not ok:
                 break
             found = extract_card(frame)
-            prompt = f"Show: {want.name} ({want.id})" if want else "Show any card, SPACE to capture"
-            _overlay(frame, found[1] if found else None,
-                     prompt if found else prompt + "  [no card found]",
-                     (80, 220, 80) if found else (60, 60, 230))
-            cv2.imshow("SortBuddy enroll", frame)
-            key = cv2.waitKey(1) & 0xFF
+            prompt = f"Show: {want.name} ({want.id})" if want else "Show a card, SPACE to capture"
+            overlay(frame, found[1] if found else None,
+                    prompt if found else prompt + "  [no card found]",
+                    (80, 220, 80) if found else (60, 60, 230),
+                    f"{cam.focus_label}   [ ] focus   A auto   Q done")
+            key = show("SortBuddy enroll", frame)
             if key == ord("q"):
                 break
+            if cam.handle_key(key):
+                continue
             if key == ord("s") and want:
                 todo.pop(0)
             if key != ord(" "):
@@ -193,21 +250,25 @@ def cmd_enroll(args):
                 save_reference(catalog, path, want.id, found[0])
                 todo.pop(0)
                 print(f"Saved {want.id}")
-            else:
-                card_id = input("Card id (e.g. OGN-042, blank to discard): ").strip()
-                if not card_id:
-                    continue
-                name = input("Name (optional): ").strip()
-                save_reference(catalog, path, card_id, found[0], name=name)
-                print(f"Saved {card_id}")
-            added += 1
+                added += 1
+                continue
+            card_img, text = found[0], None
+            if use_ocr:
+                text = ocr.read_card(card_img)
+                card_img = text.upright
+            result = _confirm(catalog, card_img, text, _next_auto_id(catalog))
+            if result:
+                card_id, fields = result
+                save_reference(catalog, path, card_id, card_img, **fields)
+                print(f"Saved {card_id}: {fields.get('name', '')}")
+                added += 1
     finally:
-        cap.release()
+        cam.release()
         cv2.destroyAllWindows()
     print(f"Captured {added} card(s) into {path}")
     if len(catalog):
         build_index(str(path))
-    print("Fill in fields like set, cost, domain, rarity in the catalog to sort on them.")
+    print("Fill in fields like cost, domain, rarity in the catalog to sort on them.")
 
 
 def cmd_identify(args):
@@ -242,13 +303,6 @@ def cmd_plan(args):
     print("\nAfter each pass: load the NO pile into the hopper first, then the YES pile on top.")
 
 
-def _overlay(frame, corners, text, color):
-    if corners is not None:
-        cv2.polylines(frame, [corners.astype(int)], True, color, 3)
-    cv2.rectangle(frame, (0, 0), (frame.shape[1], 44), (0, 0, 0), -1)
-    cv2.putText(frame, text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
-
-
 def cmd_scan(args):
     catalog, index = _load(args.catalog)
     decide, desc = _decider(args, catalog)
@@ -257,14 +311,14 @@ def cmd_scan(args):
     log = Path(args.log or f"sessions/{time.strftime('%Y%m%d-%H%M%S')}.csv")
     log.parent.mkdir(parents=True, exist_ok=True)
 
-    cap = open_camera(args.camera)
+    cam = open_camera(args.camera, args.focus)
     gui = not args.no_window
     print(f"Sorting on: {desc}")
     print("Show one card at a time. Keys (in the window): q quit, u undo last, r rescan.")
     banner, color = "Show a card", (200, 200, 200)
     try:
         while True:
-            ok, frame = cap.read()
+            ok, frame = cam.read()
             if not ok:
                 break
             found = extract_card(frame)
@@ -290,18 +344,16 @@ def cmd_scan(args):
                 if args.beep:
                     print("\a", end="", flush=True)
             if gui:
-                _overlay(frame, corners, banner, color)
-                cv2.putText(frame, status, (10, frame.shape[0] - 12), cv2.FONT_HERSHEY_SIMPLEX,
-                            0.55, (255, 255, 255), 1)
+                overlay(frame, corners, banner, color, f"{status}   |   {cam.focus_label}")
                 try:
-                    cv2.imshow("SortBuddy", frame)
-                    key = cv2.waitKey(1) & 0xFF
+                    key = show("SortBuddy", frame)
                 except cv2.error:
                     print("No GUI available (headless OpenCV?); continuing without a window.")
                     gui = False
                     continue
                 if key == ord("q"):
                     break
+                cam.handle_key(key)
                 if key == ord("u") and (s := session.undo()):
                     session.save_log(log)
                     banner, color = f"Undid {catalog[s.card_id].name}", (200, 200, 200)
@@ -311,7 +363,7 @@ def cmd_scan(args):
     except KeyboardInterrupt:
         pass
     finally:
-        cap.release()
+        cam.release()
         if gui:
             cv2.destroyAllWindows()
     y, n = session.counts()
@@ -346,6 +398,8 @@ def main(argv=None):
     p = sub.add_parser("enroll", help="photograph your own cards with the webcam as references")
     p.add_argument("catalog", help="catalog .csv or .json (created if missing)")
     p.add_argument("--camera", type=int, default=0)
+    p.add_argument("--focus", type=int, help="manual focus 0-255 (default: autofocus)")
+    p.add_argument("--no-ocr", action="store_true", help="don't read names off cards")
     p.set_defaults(fn=cmd_enroll)
 
     def add_decision(p):
@@ -364,6 +418,7 @@ def main(argv=None):
     p.add_argument("catalog")
     add_decision(p)
     p.add_argument("--camera", type=int, default=0)
+    p.add_argument("--focus", type=int, help="manual focus 0-255 (default: autofocus)")
     p.add_argument("--stable", type=int, default=4, help="frames a match must hold before deciding")
     p.add_argument("--log", help="session log CSV (default: sessions/<time>.csv)")
     p.add_argument("--no-window", action="store_true")

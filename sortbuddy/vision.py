@@ -13,6 +13,9 @@ import numpy as np
 # Standard TCG card is 63 x 88 mm. Warped cards are rendered at this size.
 CARD_W, CARD_H = 315, 440
 CARD_ASPECT = CARD_H / CARD_W  # ~1.397
+# Cards are cut out of the full-resolution frame at this size: enough detail
+# to read the small print. Fingerprinting shrinks them back down.
+WARP_W, WARP_H = 2 * CARD_W, 2 * CARD_H
 
 
 def order_corners(pts: np.ndarray) -> np.ndarray:
@@ -63,25 +66,30 @@ def find_card(frame: np.ndarray, min_area_frac: float = 0.05) -> np.ndarray | No
     return None if best is None else order_corners(best)
 
 
-def warp_card(frame: np.ndarray, corners: np.ndarray) -> np.ndarray:
-    """Perspective-correct the card to a CARD_W x CARD_H portrait image."""
+def warp_card(frame: np.ndarray, corners: np.ndarray, size: tuple[int, int] = (WARP_W, WARP_H)) -> np.ndarray:
+    """Perspective-correct the card to an upright portrait image of `size`."""
     tl, tr, br, bl = corners
     top = np.linalg.norm(tr - tl)
     left = np.linalg.norm(bl - tl)
     if top > left:
         # Card is lying sideways; rotate the corner order so the long edge is vertical.
         corners = np.array([tr, br, bl, tl], dtype=np.float32)
-    dst = np.array(
-        [[0, 0], [CARD_W - 1, 0], [CARD_W - 1, CARD_H - 1], [0, CARD_H - 1]],
-        dtype=np.float32,
-    )
+    w, h = size
+    dst = np.array([[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]], dtype=np.float32)
     m = cv2.getPerspectiveTransform(corners, dst)
-    return cv2.warpPerspective(frame, m, (CARD_W, CARD_H))
+    return cv2.warpPerspective(frame, m, (w, h))
 
 
-def extract_card(frame: np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
-    """Find and warp the card in one go. Returns (warped, corners) or None."""
-    corners = find_card(frame)
+def extract_card(frame: np.ndarray, detect_width: int = 960) -> tuple[np.ndarray, np.ndarray] | None:
+    """Find and warp the card in one go. Returns (warped, corners) or None.
+
+    The outline is found on a downscaled copy (fast, and edge detection is
+    tuned for roughly this size); the card is then cut from the full frame.
+    """
+    scale = min(1.0, detect_width / frame.shape[1])
+    small = frame if scale == 1.0 else cv2.resize(frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+    corners = find_card(small)
     if corners is None:
         return None
+    corners = corners / scale
     return warp_card(frame, corners), corners

@@ -144,3 +144,56 @@ def test_enroll_from_webcam_photos_then_identify(demo, tmp_path):
         warped, _ = extract_card(fake_photo(img, rng, upside_down=True))
         m = index.match(warped)
         assert m.card_id == card_id and m.confident(MAX_DISTANCE, MIN_MARGIN), (card_id, m)
+
+
+class FakeCamera:
+    """Stands in for a webcam: serves photos of the given cards, one per capture."""
+
+    focus_label = "focus: auto"
+
+    def __init__(self, cards, rng):
+        self.photos = [fake_photo(c, rng) for c in cards]
+        self.i = 0
+
+    def read(self):
+        return True, self.photos[min(self.i, len(self.photos) - 1)].copy()
+
+    def handle_key(self, key):
+        return False
+
+    def release(self):
+        pass
+
+
+def test_enroll_flow_reads_names_and_saves(demo, tmp_path, monkeypatch):
+    from sortbuddy import cli, ocr
+
+    if not ocr.available():
+        pytest.skip("rapidocr_onnxruntime not installed")
+    _, demo_catalog, _ = demo
+    cards = [cv2.imread(str(demo_catalog.image_path(demo_catalog[i]))) for i in ("DEMO-003", "DEMO-007")]
+    cam = FakeCamera(cards, random.Random(4))
+    # Per card: an idle frame, SPACE to capture, ENTER to accept what OCR read. Then Q.
+    loop_keys = iter([255, ord(" "), 255, ord(" "), ord("q")])
+    confirm_keys = iter([13, 13])
+
+    def fake_show(window, frame):
+        key = next(loop_keys)
+        return key
+
+    def fake_wait(_):
+        cam.i += 1  # next card goes under the camera after each confirm
+        return next(confirm_keys)
+
+    monkeypatch.setattr(cli, "open_camera", lambda *a, **k: cam)
+    monkeypatch.setattr(cli, "show", fake_show)
+    monkeypatch.setattr(cv2, "imshow", lambda *a: None)
+    monkeypatch.setattr(cv2, "waitKey", fake_wait)
+    monkeypatch.setattr(cv2, "destroyAllWindows", lambda: None)
+
+    path = tmp_path / "cards.csv"
+    main(["enroll", str(path)])
+    cat = Catalog.load(path)
+    assert sorted(cat.cards) == ["DEMO-003", "DEMO-007"]
+    assert cat["DEMO-003"].name == "Demo Card 3" and cat["DEMO-003"].get("number") == 3
+    assert (tmp_path / cat["DEMO-007"].get("image")).exists()

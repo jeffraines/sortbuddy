@@ -57,10 +57,17 @@ py -m venv .venv
 .venv\Scripts\activate
 pip install -e .
 
+# Optional but recommended: reads card names off the card for you
+pip install rapidocr_onnxruntime
+
 # 1. Photograph some of your cards as references. A window opens:
-#    hold a card flat, press SPACE, type its id and name in the terminal.
-sortbuddy enroll mycards\catalog.csv
-#    (If it opens the wrong camera, add --camera 1.)
+#    hold a card flat and press SPACE. It reads the name and set/number
+#    and shows them: ENTER saves, TAB tries another line as the name,
+#    E lets you type it, ESC discards.
+sortbuddy cameras                         # which --camera number is your webcam
+sortbuddy enroll mycards\catalog.csv --camera 1
+#    Blurry? Press [ and ] in the window to focus by hand (A = autofocus),
+#    then start with e.g. --focus 120 next time.
 
 # 2. Open mycards\catalog.csv in a spreadsheet and fill in columns
 #    such as set, cost, domain, rarity. Use | for multiple values: fury|chaos
