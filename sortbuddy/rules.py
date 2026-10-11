@@ -90,6 +90,10 @@ class Rule:
                 clauses.append(Clause(field, op, value))
             self.groups.append(clauses)
 
+    @property
+    def fields(self) -> list[str]:
+        return [c.field for g in self.groups for c in g]
+
     def __call__(self, card: Card) -> bool:
         return any(all(c.test(card) for c in g) for g in self.groups)
 

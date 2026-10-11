@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from pathlib import Path
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -98,6 +99,50 @@ def _fields(card: dict) -> dict:
     return {k: v for k, v in fields.items() if v not in (None, "", [])}
 
 
+# Whole sets are downloaded once and kept on disk, so after the first card
+# of a set every lookup is local (and works offline). Refreshed after a week
+# so prices stay current.
+CACHE_DIR = Path.home() / ".sortbuddy" / "cache"
+CACHE_DAYS = 7
+_set_cache: dict[str, list] = {}
+
+
+def _cached_set(key: str, fetch) -> list:
+    if key in _set_cache:
+        return _set_cache[key]
+    path = CACHE_DIR / f"{key}.json"
+    try:
+        if time.time() - path.stat().st_mtime < CACHE_DAYS * 86400:
+            _set_cache[key] = json.loads(path.read_text(encoding="utf-8"))
+            return _set_cache[key]
+    except (OSError, ValueError):
+        pass
+    cards = fetch()
+    _set_cache[key] = cards
+    if cards:
+        try:
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(cards), encoding="utf-8")
+        except OSError:
+            pass
+    return cards
+
+
+def _scryfall_set(set_code: str) -> list:
+    """Every printing in a Magic set (a few requests, then cached)."""
+    def fetch():
+        cards = []
+        url = f"https://api.scryfall.com/cards/search?q=e%3A{urllib.parse.quote(set_code.lower())}&unique=prints&order=set"
+        while url:
+            data = _get(url)
+            if not data:
+                break
+            cards += data.get("data", [])
+            url = data.get("next_page") if data.get("has_more") else None
+        return cards
+    return _cached_set(f"mtg-{set_code.upper()}", fetch)
+
+
 def scryfall(name: str, set_code: str | None = None, number: int | None = None,
              fuzzy: bool = True) -> tuple[dict, bool] | None:
     """Returns (fields, printing_confirmed). Without a set code that Scryfall
@@ -105,9 +150,13 @@ def scryfall(name: str, set_code: str | None = None, number: int | None = None,
     api = "https://api.scryfall.com/cards"
     q = urllib.parse.quote
     if set_code and number is not None:
-        card = _get(f"{api}/{q(set_code.lower())}/{number}")
-        if card and (not name or _same_name(card["name"], name)):
-            return _fields(card), True
+        same = [c for c in _scryfall_set(set_code) if c.get("collector_number") == str(number)]
+        if not same:
+            card = _get(f"{api}/{q(set_code.lower())}/{number}")
+            same = [card] if card else []
+        match = next((c for c in same if not name or _same_name(c["name"], name)), None)
+        if match:
+            return _fields(match), True
     if not name:
         return None
     if set_code:
@@ -120,13 +169,13 @@ def scryfall(name: str, set_code: str | None = None, number: int | None = None,
 
 
 RIFTCODEX = "https://api.riftcodex.com"
-_set_cache: dict[str, list] = {}
 
 
 def _riftcodex_set(set_code: str) -> list:
-    """Every card in a Riftbound set (cached; a set is ~4 requests)."""
+    """Every card in a Riftbound set (~4 requests, then cached)."""
     key = set_code.upper()
-    if key not in _set_cache:
+
+    def fetch():
         cards, page = [], 1
         while True:
             data = _get(f"{RIFTCODEX}/cards?set_id={urllib.parse.quote(key)}&size=100&page={page}", "Riftcodex")
@@ -136,8 +185,8 @@ def _riftcodex_set(set_code: str) -> list:
             if page >= data.get("pages", 1):
                 break
             page += 1
-        _set_cache[key] = cards
-    return _set_cache[key]
+        return cards
+    return _cached_set(f"riftbound-{key}", fetch)
 
 
 def _riftcodex_fields(card: dict) -> dict:

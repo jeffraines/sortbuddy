@@ -75,6 +75,20 @@ def _ocr():
     return _engine
 
 
+_strip_engine = None
+
+
+def _strip_ocr():
+    """Same models, tuned for a thin strip: the default engine scales the
+    *short* side up to 736 px, which makes a strip huge and slow."""
+    global _strip_engine
+    if _strip_engine is None:
+        from rapidocr_onnxruntime import RapidOCR
+        _strip_engine = RapidOCR(det_model_path=None, det_limit_type="max", det_limit_side_len=960)
+        _strip_engine.use_angle_cls = False
+    return _strip_engine
+
+
 def available() -> bool:
     try:
         _ocr()
@@ -217,10 +231,11 @@ def _foil(lines: list[Line], card_h: int, card_w: int) -> bool | None:
     for ln in lines:
         if ln.y0 > 0.85 * card_h and ln.x0 < 0.5 * card_w and _LANGUAGE.search(ln.text):
             between = _LANGUAGE.split(ln.text)[0]
-            if re.search(r"[★☆✩✪*]", between):
-                return True
-            if re.search(r"[A-Z0-9]\s*[•·.∙]\s*$", between):
-                return False
+            # Only Magic's "SET ★ EN" layout: set code, mark, language. On
+            # Riftbound ("OGN · 114/298 · KR") the dots are just separators.
+            m = re.search(r"(?<![A-Za-z0-9])[A-Z][A-Z0-9]{2,3}\s*([★☆✩✪*•·.∙])\s*$", between)
+            if m:
+                return m.group(1) in "★☆✩✪*"
     return None
 
 
@@ -283,6 +298,29 @@ def _name_candidates(lines: list[Line], card_h: int) -> list[str]:
             seen.add(name)
             out.append(name)
     return out
+
+
+STRIP_TOP = 0.86  # the collector line lives in the bottom ~14% of the card
+
+
+def read_collector(card: np.ndarray) -> CardText:
+    """Fast path (~0.1-0.2 s): read only the bottom strip, both ways up, for
+    set code, number, language, rarity letter and foil mark. No name."""
+    h, w = card.shape[:2]
+    top = int(STRIP_TOP * h)
+    best = (None, -1, card)
+    for img in (card, cv2.rotate(card, cv2.ROTATE_180)):
+        lines = _read(img[top:], _strip_ocr())
+        for ln in lines:  # back to whole-card coordinates
+            ln.y0 += top
+            ln.y1 += top
+        set_code, number = _collector(lines, h, w)
+        score = 2 * (number is not None) + 2 * (set_code is not None) + bool(_LANGUAGE.search(" ".join(l.text for l in lines)))
+        if score > best[1]:
+            best = (lines, score, img)
+    lines, _, img = best
+    set_code, number = _collector(lines, h, w)
+    return CardText([], set_code, number, _details(lines, h, w), _foil(lines, h, w), lines, img)
 
 
 def read_card(card: np.ndarray) -> CardText:

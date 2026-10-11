@@ -305,3 +305,34 @@ def test_korean_card_keeps_english_and_korean_names():
     # Lookup off: the Korean name is the name.
     p = propose(text, "", "card-001", None, {})
     assert p.fields["name"] == "진보의 날" and p.card_id == "OGN-114"
+
+
+def test_identify_without_enrolling_then_recognise(demo, tmp_path):
+    from sortbuddy import ocr
+    from sortbuddy.identify import Identifier
+
+    if not ocr.available():
+        pytest.skip("rapidocr_onnxruntime not installed")
+    _, demo_catalog, _ = demo
+    looked_up = []
+
+    def fake_source(name, set_code, number):
+        looked_up.append((set_code, number))
+        card = demo_catalog.get(f"{set_code}-{number:03d}")
+        return (dict(card.fields, set=set_code, number=number), True) if card else None
+
+    path = tmp_path / "list.csv"
+    ident = Identifier(Catalog([], tmp_path), path, FingerprintIndex([], np.zeros((0, 32), np.uint8)), fake_source)
+    img = cv2.imread(str(demo_catalog.image_path(demo_catalog["DEMO-005"])))
+    rng = random.Random(8)
+
+    card = extract_card(fake_photo(img, rng))[0]
+    r = ident.identify(card)
+    assert r and r.card_id == "DEMO-005" and r.how == "bottom line" and r.new
+    ident.learn(r, card)
+    assert Catalog.load(path)["DEMO-005"].get("cost") == demo_catalog["DEMO-005"].get("cost")
+
+    # Another photo of the same card: recognised from its picture, no lookup.
+    looked_up.clear()
+    r2 = ident.identify(extract_card(fake_photo(img, rng, upside_down=True))[0])
+    assert r2.card_id == "DEMO-005" and r2.how == "known" and not looked_up

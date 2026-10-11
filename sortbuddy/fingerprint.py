@@ -80,6 +80,15 @@ class FingerprintIndex:
         hashes = np.stack([phash(images[i]) for i in ids]) if ids else np.zeros((0, HASH_BYTES), np.uint8)
         return cls(ids, hashes)
 
+    def add(self, card_id: str, card: np.ndarray) -> None:
+        """Learn one more card (or replace its fingerprint)."""
+        h = phash(card)[None, :]
+        if card_id in self.ids:
+            self.hashes[self.ids.index(card_id)] = h
+        else:
+            self.ids.append(card_id)
+            self.hashes = np.vstack([self.hashes, h])
+
     def save(self, path: str | Path) -> None:
         np.savez_compressed(path, ids=np.array(self.ids), hashes=self.hashes)
 

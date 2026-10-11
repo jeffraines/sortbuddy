@@ -130,6 +130,29 @@ Tips for the webcam:
 - Enroll and scan with the same camera and lighting. Matching works best
   when reference photos look like what it sees while sorting.
 
+## Sorting without adding cards first
+
+You don't have to add cards before sorting. In **Start sorting**, each card
+that holds still under the camera is identified, fastest way first:
+
+1. **Already in your list?** Recognised from its picture (milliseconds).
+2. **Bottom line:** OCR reads just the bottom strip for set + number
+   (`FRA • EN` / `C 0029`, `OGN · 114/298 · KR`, ~0.2 s) and looks the card
+   up in that set's card list, downloaded once and kept in
+   `~/.sortbuddy/cache` (refreshed weekly for prices).
+3. **Name:** otherwise the whole card is read and looked up by name (~1 s).
+
+Cards found by 2 or 3 are added to your list with their photo, so the list
+builds itself as you sort and the next copy, or the next pass of a
+multi-pass sort, is recognised instantly. Cards that can't be identified get
+a **?**: set them aside. If the rule uses `foil` or `price`, a recognised
+card's bottom line is still read for its foil mark (foil is per copy).
+
+The app warns before sorting if a rule names a field no card has (e.g.
+`color` instead of `colors`), since such a rule says NO to everything.
+Korean names (`name_kr`) are only read in **Add cards** mode; sorting skips
+them for speed.
+
 ## Riftbound cards: details filled in automatically
 
 Choose **Card details from: Riftbound (Riftcodex)** (or `--lookup riftbound`).

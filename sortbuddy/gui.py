@@ -9,6 +9,7 @@ YES / NO (Sort). Closing the window always stops the camera cleanly.
 
 from __future__ import annotations
 
+import difflib
 import json
 import os
 import queue
@@ -25,14 +26,20 @@ import numpy as np
 
 from . import cli, lookup, ocr
 from .camera import Camera
-from .catalog import Catalog
-from .fingerprint import FingerprintIndex
+from .catalog import Card, Catalog
+from .fingerprint import FingerprintIndex, hamming, phash
+from .identify import Identifier
 from .proposal import propose
 from .rules import Rule, RuleError
-from .session import Debouncer, Session
+from .session import Session
 from .vision import extract_card
 
 SETTINGS = Path.home() / ".sortbuddy-gui.json"
+# Fields card lookups and OCR fill in, so rules can be checked before any card is known.
+KNOWN_FIELDS = {"id", "name", "set", "set_name", "number", "rarity", "cost", "mana_cost", "colors",
+                "color_identity", "type", "card_types", "subtypes", "power", "toughness", "keywords", "text",
+                "artist", "year", "price", "price_foil", "foil", "language", "domain", "supertype", "energy",
+                "might", "tags", "variant", "name_kr"}
 NO_LOOKUP = "Off (fill in details yourself)"
 DEFAULTS = {"catalog": str(Path("mycards") / "catalog.csv"), "camera": 0, "focus": "",
             "rule": "cost <= 3", "lookup": "auto", "version": 2}
@@ -261,8 +268,10 @@ class App:
         ttk.Label(p, text="How it works", style="Heading.TLabel").pack(anchor="w")
         steps = ("1.  Add cards: hold each card under the camera and press Space. "
                  "SortBuddy reads it, looks up its details, and you press Enter to save.\n\n"
-                 "2.  Type a sort rule, then Start sorting. Each card you show gets a "
-                 "big YES or NO.\n\n"
+                 "2.  Or skip that: type a sort rule and Start sorting. Each card is "
+                 "identified from its bottom line (set + number), added to your list, "
+                 "and gets a big YES or NO. Cards already in your list are recognised "
+                 "instantly from their picture.\n\n"
                  "Keys:  Space capture · Enter save · Tab next name guess · Esc discard · "
                  "[ ] focus · A autofocus · U undo · F11 full screen")
         tk.Label(p, text=steps, bg=PANEL, fg=DIM, font=(FONT, 10), justify="left", wraplength=370).pack(
@@ -413,6 +422,8 @@ class App:
                     self.log_line(payload)
                 elif kind == "proposal" and self.pending is not None and payload[0] is self.pending:
                     self._show_proposal(payload[1])
+                elif kind == "identified":
+                    self._on_identified(*payload)
                 elif kind == "done":
                     payload()
         except queue.Empty:
@@ -442,26 +453,36 @@ class App:
             except RuleError as e:
                 messagebox.showerror("SortBuddy", f"Sort rule problem: {e}")
                 return
-            if not path.exists():
-                messagebox.showerror("SortBuddy", "This card list doesn't exist yet. Add some cards first.")
+            if path.exists():
+                self.catalog = Catalog.load(path)
+            else:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                self.catalog = Catalog([], path.parent)
+            if not self._rule_fields_ok():
                 return
             idx = cli._index_path(str(path))
-            self.catalog = Catalog.load(path)
-            if not idx.exists() or idx.stat().st_mtime < path.stat().st_mtime:
+            if path.exists() and (not idx.exists() or idx.stat().st_mtime < path.stat().st_mtime):
                 cli.build_index(str(path))
-            self.index = FingerprintIndex.load(idx)
-            if len(self.index) == 0:
-                messagebox.showerror("SortBuddy", "No card photos in this list yet. Add some cards first.")
+            index = FingerprintIndex.load(idx) if idx.exists() else FingerprintIndex([], np.zeros((0, 32), np.uint8))
+            source_key = self.lookup_names.get(self.lookup_var.get(), "")
+            source = lookup.SOURCES[source_key][1] if source_key else None
+            use_ocr = ocr.available()
+            if (source is None or not use_ocr) and len(index) == 0:
+                messagebox.showerror("SortBuddy", "With card details lookup off (or OCR not installed), only cards "
+                                     "already in your list can be recognised, and this list is empty.")
                 return
+            self.identifier = Identifier(self.catalog, path, index, source, use_ocr)
+            self.check_foil = any(f in ("foil", "price") for f in self.rule.fields)
             self.session = Session(self.catalog)
-            self.debounce = Debouncer()
+            self.track = None
+            self.unknown = 0
             self.log_path = path.parent / "sessions" / f"{time.strftime('%Y%m%d-%H%M%S')}.csv"
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
-            self.rule_label.configure(text=f"Rule:  {self.rule}   ·   {len(self.catalog)} known cards")
+            self.rule_label.configure(text=f"Rule:  {self.rule}   ·   {len(self.catalog)} cards in your list", fg=DIM)
             self.verdict.configure(text="—", bg=LINE, fg=FG)
             self.verdict_name.configure(text="Show a card")
             self.recent.delete(0, "end")
-            self.counts_var.set("YES 0   ·   NO 0")
+            self._update_counts()
         else:
             if path.exists():
                 self.catalog = Catalog.load(path)
@@ -507,7 +528,11 @@ class App:
                                      self.events.put(("done", self.refresh_count))))
         if self.mode == "sort":
             y, n = self.session.counts()
-            print(f"Sorted {y + n} cards ({y} yes, {n} no). Log: {self.log_path.name}\n")
+            print(f"Sorted {y + n} cards ({y} yes, {n} no, {self.unknown} not identified). "
+                  f"Log: {self.log_path.name}\n")
+            if self.identifier.index.ids:
+                self.identifier.index.save(cli._index_path(self.catalog_var.get()))
+            self.refresh_count()
         self.mode = None
         self.pending = None
         self.enroll_btn.configure(text="Start adding cards", style="Accent.TButton")
@@ -545,50 +570,114 @@ class App:
         self.loop_id = self.root.after(15, self.loop)
 
     # --------------------------------------------------------------- sorting
+    def _rule_fields_ok(self) -> bool:
+        """Warn about rules that can never match, e.g. 'color' vs 'colors'."""
+        known = set(KNOWN_FIELDS)
+        for c in self.catalog.cards.values():
+            known |= set(c.fields)
+        unknown = [f for f in self.rule.fields if f not in known]
+        if not unknown:
+            return True
+        hints = []
+        for f in unknown:
+            close = difflib.get_close_matches(f, sorted(known), n=1)
+            hints.append(f"“{f}”" + (f" (did you mean “{close[0]}”?)" if close else ""))
+        return messagebox.askyesno(
+            "SortBuddy", "No card has a field called " + ", ".join(hints) + ", so this rule would "
+            "answer NO for every card.\n\nFields include: name, set, number, rarity, cost, colors, "
+            "domain, type, power, might, energy, foil, language, price.\n\nStart anyway?")
+
     def _sort_step(self):
-        seen, color = None, (120, 120, 120)
-        if self.found:
-            m = self.index.match(self.found[0])
-            if m and m.confident(cli.MAX_DISTANCE, cli.MIN_MARGIN):
-                seen = m.card_id
-                self.say(f"{self.catalog[seen].name}   (match distance {m.distance}, gap {m.margin})", FG)
-            elif m:
-                self.say(f"Not sure which card this is (closest: {m.card_id}, distance {m.distance})", AMBER)
-                color = (66, 185, 245)
+        """Track the card in view; identify it once it holds still."""
+        t = self.track
+        if not self.found:
+            if t:
+                t["miss"] += 1
+                if t["miss"] >= 6:  # card taken away: the next one is a new card
+                    self.track = None
+            if not self.track:
+                self.say("Show a card", DIM)
+            return None
+        h = phash(self.found[0])
+        if t and hamming(h, t["hash"]) <= 45:
+            t.update(stable=t["stable"] + 1, miss=0, hash=h)
         else:
-            self.say("Show a card", DIM)
-        decided = self.debounce.update(seen)
-        if decided:
-            card = self.catalog[decided]
-            yes = bool(self.rule(card))
-            self.session.record(decided, yes, str(self.rule))
-            self.session.save_log(self.log_path)
-            self._show_verdict(card.name, yes)
-            self.root.bell()
-        if seen:
-            color = (110, 207, 62) if self.rule(self.catalog[seen]) else (91, 91, 239)
-        return color
+            t = self.track = {"hash": h, "stable": 1, "miss": 0, "state": "new", "result": None}
+        if t["state"] == "new" and t["stable"] >= 3:
+            t["state"] = "pending"
+            t["start"] = time.time()
+            img = self.found[0].copy()
+
+            def work(track=t, img=img):
+                try:
+                    result = self.identifier.identify(img, self.check_foil)
+                except Exception as e:  # noqa: BLE001 - e.g. offline: report, don't crash
+                    print(f"Couldn't identify: {e}\n")
+                    result = None
+                self.events.put(("identified", (track, result, img)))
+            self.background(work)
+        if t["state"] == "pending":
+            self.say("Identifying…", AMBER)
+            return (66, 185, 245)
+        if t["state"] == "done":
+            yes = t.get("yes")
+            return (66, 185, 245) if yes is None else (110, 207, 62) if yes else (91, 91, 239)
+        return (200, 200, 200)
+
+    def _on_identified(self, track, result, img) -> None:
+        if self.mode != "sort":
+            return
+        track["state"] = "done"
+        if result is None:
+            self.unknown += 1
+            track["yes"] = None
+            self.verdict.configure(text="?", bg=AMBER, fg="#0b0d12")
+            self.verdict_name.configure(text="Couldn't identify this card: set it aside")
+            self.recent.insert(0, "?      Unknown card")
+            self.recent.itemconfigure(0, fg=AMBER)
+            self._update_counts()
+            self.say("Not identified. Is the bottom line in focus and free of glare?", AMBER)
+            return
+        if result.new:
+            self.identifier.learn(result, img)
+            self.refresh_count()
+            self.rule_label.configure(text=f"Rule:  {self.rule}   ·   {len(self.catalog)} cards in your list")
+        card = Card(result.card_id, result.fields)
+        yes = bool(self.rule(card))
+        track["yes"] = yes
+        self.session.record(result.card_id, yes, str(self.rule))
+        self.session.save_log(self.log_path)
+        self._show_verdict(card.name, yes)
+        how = {"known": "recognised from its picture", "bottom line": "read from the bottom line",
+               "name": "found by name"}[result.how]
+        self.say(f"{card.name}  ·  {how}  ·  {result.seconds:.1f}s" + ("  ·  added to your list" if result.new else ""),
+                 FG)
+        self.root.bell()
+
+    def _update_counts(self) -> None:
+        y, n = self.session.counts()
+        self.counts_var.set(f"YES {y}   ·   NO {n}" + (f"   ·   ? {self.unknown}" if self.unknown else ""))
 
     def _show_verdict(self, name: str, yes: bool) -> None:
-        y, n = self.session.counts()
         self.verdict.configure(text="YES" if yes else "NO", bg=GREEN if yes else RED, fg="#0b0d12")
         self.verdict_name.configure(text=name)
-        self.counts_var.set(f"YES {y}   ·   NO {n}")
+        self._update_counts()
         self.recent.insert(0, f"{'YES' if yes else 'NO '}   {name}")
         self.recent.itemconfigure(0, fg=GREEN if yes else RED)
 
     def undo(self) -> None:
+        """Take back the last decision; the card in view gets decided again."""
         if self.mode != "sort":
             return
         s = self.session.undo()
         if not s:
             return
         self.session.save_log(self.log_path)
-        self.debounce.reset()
+        if self.track:
+            self.track.update(state="new", stable=0)
         if self.recent.size():
             self.recent.delete(0)
-        y, n = self.session.counts()
-        self.counts_var.set(f"YES {y}   ·   NO {n}")
+        self._update_counts()
         self.verdict.configure(text="—", bg=LINE, fg=FG)
         self.verdict_name.configure(text=f"Undid {self.catalog[s.card_id].name}")
 
