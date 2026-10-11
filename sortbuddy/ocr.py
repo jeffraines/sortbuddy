@@ -37,6 +37,7 @@ class CardText:
     names: list[str] = field(default_factory=list)  # best guess first
     set_code: str | None = None
     number: int | None = None
+    foil: bool | None = None  # from the Magic bottom line: "LCI ★ EN" foil, "FRA • EN" not; None = can't tell
     lines: list[Line] = field(default_factory=list)
     upright: np.ndarray | None = None  # the card image turned the right way up
 
@@ -117,7 +118,7 @@ def _collector(lines: list[Line], card_h: int, card_w: int) -> tuple[str | None,
     best_set, best_score = None, 0
     numbers: list[tuple[int, int]] = []  # (priority, number)
     for ln in corner:
-        text = ln.text.replace("•", " ").replace("·", " ")
+        text = re.sub(r"[•·★☆✩✪*∙]", " ", ln.text)
         words = len(re.findall(r"[A-Za-z]{2,}", text))
         has_lang = bool(_LANGUAGE.search(text))
 
@@ -144,6 +145,19 @@ def _collector(lines: list[Line], card_h: int, card_w: int) -> tuple[str | None,
                 best_set, best_score = code, score
     number = min(numbers)[1] if numbers else None
     return best_set, number
+
+
+def _foil(lines: list[Line], card_h: int, card_w: int) -> bool | None:
+    """Magic cards since 2023 mark foils in the bottom line: "LCI ★ EN" is
+    foil, "LCI • EN" is not. Returns None when that mark wasn't read."""
+    for ln in lines:
+        if ln.y0 > 0.85 * card_h and ln.x0 < 0.5 * card_w and _LANGUAGE.search(ln.text):
+            between = _LANGUAGE.split(ln.text)[0]
+            if re.search(r"[★☆✩✪*]", between):
+                return True
+            if re.search(r"[A-Z0-9]\s*[•·.∙]\s*$", between):
+                return False
+    return None
 
 
 def _respace(text: str) -> str:
@@ -182,4 +196,4 @@ def read_card(card: np.ndarray) -> CardText:
             best, best_score, best_img = lines, score, img
     h, w = best_img.shape[:2]
     set_code, number = _collector(best, h, w)
-    return CardText(_name_candidates(best, h), set_code, number, best, best_img)
+    return CardText(_name_candidates(best, h), set_code, number, _foil(best, h, w), best, best_img)

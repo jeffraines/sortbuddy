@@ -253,3 +253,15 @@ def test_scryfall_lookup_fields(monkeypatch):
     # OCR misread the set: found by name, flagged as unconfirmed printing.
     fields, confirmed = lookup.scryfall("Divining Duelist", "THEY", 3)
     assert not confirmed and fields["set"] == "FRA"
+
+
+def test_foil_mark_on_bottom_line():
+    from sortbuddy.ocr import Line, _foil
+
+    def bottom(text):
+        return [Line(text, 0.9, 20, 855, 220, 873)]
+
+    assert _foil(bottom("LCI ★ EN"), 880, 630) is True
+    assert _foil(bottom("LCI * EN"), 880, 630) is True   # OCR often reads the star as *
+    assert _foil(bottom("LCI • EN"), 880, 630) is False
+    assert _foil(bottom("LCI EN"), 880, 630) is None      # mark not read: don't guess

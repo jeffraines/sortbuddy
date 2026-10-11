@@ -202,6 +202,11 @@ def _confirm(catalog: Catalog, card_img, text, auto_id: str, source=None):
             else:
                 card_id = auto_id
         card_id = typed_id or card_id
+        foil = text.foil if text else None
+        if foil is not None:
+            fields["foil"] = "yes" if foil else "no"
+            if foil and "price_foil" in fields:
+                fields["price"] = fields["price_foil"]  # price of the copy in hand
 
         h = 640
         img = cv2.resize(card_img, (int(card_img.shape[1] * h / card_img.shape[0]), h))
@@ -213,9 +218,12 @@ def _confirm(catalog: Catalog, card_img, text, auto_id: str, source=None):
             rows.append((status, status_color))
         if info:
             colors = "/".join(info.get("colors", []))
-            price = f"${info['price']}" if "price" in info else ""
+            price = f"${fields['price']}" if "price" in fields else ""
             rows.append((f"{info.get('mana_cost', '')}  cost {info.get('cost', '')}  {colors}  {info.get('rarity', '')}  {price}", grey))
             rows.append((info.get("type", "")[:42], grey))
+        if foil is not None:
+            rows.append(("Foil (star on bottom line)" if foil else "Non-foil (dot on bottom line)",
+                         (0, 215, 255) if foil else grey))
         else:
             rows.append(("Set: " + str(set_code or "-") + "    #: " + str(number if number is not None else "-"), grey))
         rows += [("", None),

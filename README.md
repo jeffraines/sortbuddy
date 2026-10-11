@@ -144,6 +144,10 @@ set/number in the bottom-left corner, SortBuddy looks the card up on
 | `keywords`, `text` | Flash; rules text | `keywords has flash`, `text contains draw a card` |
 | `artist`, `year` | David Auden Nash, 2026 | `year >= 2020` |
 | `price`, `price_foil` | 0.25, 0.38 (USD, when enrolled) | `price >= 1` |
+| `foil` | yes / no, from the bottom line: `LCI ★ EN` foil, `FRA • EN` not | `foil == yes` |
+
+For a foil, `price` is the foil price. Cards printed before the star/dot
+mark (around 2023) leave `foil` empty.
 
 If the set code couldn't be read, the card is found by name and the window
 says so; check it's the right printing before saving. Only enrolling uses
