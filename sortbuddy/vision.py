@@ -65,17 +65,32 @@ def _card_shaped(quad: np.ndarray, contour_area: float) -> bool:
 
 
 def find_card_checked(frame: np.ndarray, min_area_frac: float = 0.05) -> tuple[np.ndarray | None, str]:
-    """Locate one card. Returns (corners or None, problem): problem is "" or
-    "several" when more than one card (or overlapping cards) are in view."""
+    """Locate the (top) card. Returns (corners or None, note), note being:
+
+    ""         a clean card outline
+    "rough"    no clean outline (e.g. a messy stack, overlapping cards):
+               the corners are a best guess, so only trust what can be read
+               off the card, not a picture match
+    "several"  separate cards side by side; the largest is returned
+
+    Cards in a stack or overlapping each other merge into one blob, but the
+    top card's own edge (or its printed frame) still forms a clean rectangle
+    inside it, so outlines inside blobs are searched as well.
+    """
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
     edges = cv2.Canny(blur, 30, 120)
-    edges = cv2.dilate(edges, np.ones((3, 3), np.uint8), iterations=2)
-    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # Only slightly thickened edges: thickening more merges the top card's
+    # edge with the cards under it (simulated stacks: 75/80 top cards found
+    # this way vs ~10% with the old, thicker edges).
+    edges = cv2.dilate(edges, np.ones((3, 3), np.uint8), iterations=1)
+    contours, hierarchy = cv2.findContours(edges, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    if hierarchy is None:
+        return None, ""
 
     frame_area = gray.shape[0] * gray.shape[1]
-    cards, odd_blobs = [], 0
-    for c in contours:
+    clean, rough, biggest_blob = [], None, 0.0
+    for c, (_, _, _, parent) in zip(contours, hierarchy[0]):
         area = cv2.contourArea(c)
         if area < min_area_frac * frame_area:
             continue
@@ -84,17 +99,28 @@ def find_card_checked(frame: np.ndarray, min_area_frac: float = 0.05) -> tuple[n
         if min(w, h) == 0:
             continue
         aspect = max(w, h) / min(w, h)
+        if parent == -1:
+            biggest_blob = max(biggest_blob, area)
+            if abs(aspect - CARD_ASPECT) <= 0.35 and (rough is None or area > rough[0]):
+                rough = (area, quad)
         hull_area = cv2.contourArea(cv2.convexHull(c))
         solid = hull_area > 0 and area / hull_area > 0.975  # no dents (two overlapping cards: <= 0.97)
         if abs(aspect - CARD_ASPECT) <= 0.25 and solid and _card_shaped(quad, area):
-            cards.append((area, quad))
-        elif area > 0.08 * frame_area and 0 < area / max(1.0, cv2.contourArea(cv2.convexHull(c))) < 0.98:
-            odd_blobs += 1  # a big shape with a dent where two cards overlap
-    if len(cards) > 1 or (odd_blobs and not cards):
-        return None, "several"
-    if not cards:
-        return None, ""
-    return order_corners(cards[0][1]), ""
+            clean.append((area, quad))
+
+    # A clean outline must be a good part of the biggest shape: the top card of
+    # a stack is, a card's art box (also a rectangle) isn't.
+    clean = [(a, q) for a, q in clean if a >= 0.45 * biggest_blob]
+    if clean:
+        clean.sort(key=lambda x: -x[0])
+        area, quad = clean[0]
+        centre = quad.mean(axis=0)
+        apart = [q for a, q in clean[1:] if 0.6 < a / area and
+                 np.linalg.norm(q.mean(axis=0) - centre) > 0.5 * np.sqrt(area)]
+        return order_corners(quad), ("several" if apart else "")
+    if rough is not None:
+        return order_corners(rough[1]), "rough"
+    return None, ""
 
 
 def find_card(frame: np.ndarray, min_area_frac: float = 0.05) -> np.ndarray | None:
@@ -124,13 +150,15 @@ def extract_card_checked(frame: np.ndarray, detect_width: int = 960):
     """
     scale = min(1.0, detect_width / frame.shape[1])
     small = frame if scale == 1.0 else cv2.resize(frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
-    corners, problem = find_card_checked(small)
+    corners, note = find_card_checked(small)
     if corners is None:
-        return None, problem
+        return None, note
     corners = corners / scale
-    return (warp_card(frame, corners), corners), ""
+    return (warp_card(frame, corners), corners), note
 
 
 def extract_card(frame: np.ndarray, detect_width: int = 960) -> tuple[np.ndarray, np.ndarray] | None:
-    """Find and warp the card in one go. Returns (warped, corners) or None."""
-    return extract_card_checked(frame, detect_width)[0]
+    """Find and warp the card in one go. Returns (warped, corners) or None.
+    Only clean outlines; use extract_card_checked to also get rough ones."""
+    found, note = extract_card_checked(frame, detect_width)
+    return found if note != "rough" else None

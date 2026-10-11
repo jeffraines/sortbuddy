@@ -183,7 +183,10 @@ and keeps the sharpest. If fps is low at 1920 × 1080, try 1280 × 720.
 
 ### Mistakes it guards against
 
-- Two cards in view or overlapping: "One card at a time", nothing decided.
+- Stacks and overlapping cards: the top card's own outline is found inside
+  the pile (in simulation: the top card of 94/100 messy stacks and 100/100
+  overlaps, none confidently mistaken for another card). With no clean
+  outline it still reads the card, but only trusts the bottom line.
 - Nudging a card doesn't decide it again; it only counts again once it's
   clearly a different card or was taken away (another copy).
 - Picture matches that aren't close are checked against the bottom line.

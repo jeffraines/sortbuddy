@@ -647,8 +647,8 @@ class App:
                 self.photo = to_photo(frame, w, h)
                 self.view.configure(image=self.photo, text="")
             if self.mode == "enroll" and self.pending is None and not self.sweep:
-                if self.problem == "several":
-                    self.say("One card at a time, please", AMBER)
+                if self.problem == "rough":
+                    self.say("Card edge unclear (stack or overlap?): Space still works, check what's read", AMBER)
                 else:
                     self.say("Card found: press Space to capture" if self.found else
                              "Hold a card flat under the camera", GREEN if self.found else DIM)
@@ -782,9 +782,6 @@ class App:
         A card is decided once. It only counts again if it's clearly a
         different card, or the view was empty for a moment (taken away),
         so nudging it or a flicker in detection doesn't re-decide it."""
-        if self.problem == "several":
-            self.say("One card at a time, please", AMBER)
-            return None
         if not self.found:
             self.empty += 1
             if self.empty >= 8:  # card taken away: the next card is new, even another copy
@@ -805,17 +802,20 @@ class App:
             t["state"] = "pending"
             t["job"] = t.get("job", 0) + 1
             img = self.found[0].copy()
+            careful = self.problem == "rough"
 
-            def work(track=t, img=img, job=t["job"]):
+            def work(track=t, img=img, job=t["job"], careful=careful):
                 try:
-                    result = self.identifier.identify(img, self.check_foil, set(self.rule.fields))
+                    result = self.identifier.identify(img, self.check_foil, set(self.rule.fields), careful)
                 except Exception as e:  # noqa: BLE001 - e.g. offline: report, don't crash
                     print(f"Couldn't identify: {e}\n")
                     result = None
                 self.events.put(("identified", (track, result, img, job)))
             self.background(work)
         if t["state"] == "pending":
-            self.say("Identifying…", AMBER)
+            self.say("Identifying…" + ("  (card edge unclear: reading the bottom line)" if self.problem == "rough"
+                                       else "  (more than one card in view: using the biggest)"
+                                       if self.problem == "several" else ""), AMBER)
             return (66, 185, 245)
         if t["state"] == "done":
             yes = t.get("yes")

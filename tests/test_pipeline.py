@@ -366,22 +366,45 @@ def _on_table(card, corners, size=(1080, 1920), bg=(170, 190, 205)):
     return cv2.warpPerspective(card, m, size[::-1], dst=frame, borderMode=cv2.BORDER_TRANSPARENT)
 
 
-def test_overlapping_cards_are_not_one_card(demo):
+def test_top_card_found_in_overlaps_and_stacks(demo):
+    """Cards overlapping or in a messy stack (like a box of cards): the top
+    card is found and recognised, never confidently mistaken for another."""
     from sortbuddy.vision import extract_card_checked
 
-    _, catalog, _ = demo
-    a = cv2.imread(str(catalog.image_path(catalog["DEMO-001"])))
-    b = cv2.imread(str(catalog.image_path(catalog["DEMO-002"])))
-    one = _on_table(a, [[700, 200], [1100, 200], [1100, 760], [700, 760]])
-    found, problem = extract_card_checked(one)
-    assert found is not None and problem == ""
-    # Second card overlapping the first, rotated: no outline spanning both.
-    both = one.copy()
-    m = cv2.getPerspectiveTransform(np.float32([[0, 0], [315, 0], [315, 440], [0, 440]]),
-                                    np.float32([[950, 300], [1350, 380], [1250, 920], [850, 840]]))
-    both = cv2.warpPerspective(b, m, (1920, 1080), dst=both, borderMode=cv2.BORDER_TRANSPARENT)
-    found, problem = extract_card_checked(both)
-    assert found is None and problem == "several"
+    _, catalog, index = demo
+    ids = list(catalog.cards)
+    imgs = {i: cv2.imread(str(catalog.image_path(catalog[i]))) for i in ids}
+
+    def rect(cx, cy, ang, s=1.4):
+        w, h = 315 * s, 440 * s
+        a = np.deg2rad(ang)
+        r = np.array([[np.cos(a), -np.sin(a)], [np.sin(a), np.cos(a)]])
+        return (np.array([[-w / 2, -h / 2], [w / 2, -h / 2], [w / 2, h / 2], [-w / 2, h / 2]]) @ r.T + [cx, cy]).astype(np.float32)
+
+    rng = random.Random(5)
+    right = 0
+    for i in range(30):
+        f = np.full((1080, 1920, 3), (215, 215, 220), np.uint8)
+        cx, cy, ang = 960 + rng.uniform(-80, 80), 540, rng.choice([0, 90]) + rng.uniform(-10, 10)
+        under = [(cx + rng.uniform(-50, 50), cy + rng.uniform(-50, 50), ang + rng.uniform(-8, 8))
+                 for _ in range(rng.randint(2, 4))] if i % 2 else \
+                [(cx + rng.uniform(150, 300), cy + rng.uniform(80, 200), ang + rng.uniform(-30, 30))]
+        for ux, uy, ua in under:
+            f = cv2.warpPerspective(imgs[rng.choice(ids)], cv2.getPerspectiveTransform(
+                    np.float32([[0, 0], [315, 0], [315, 440], [0, 440]]), rect(ux, uy, ua)), (1920, 1080), dst=f,
+                    borderMode=cv2.BORDER_TRANSPARENT)
+        top = rng.choice(ids)
+        f = cv2.warpPerspective(imgs[top], cv2.getPerspectiveTransform(
+            np.float32([[0, 0], [315, 0], [315, 440], [0, 440]]), rect(cx, cy, ang)), (1920, 1080), dst=f,
+            borderMode=cv2.BORDER_TRANSPARENT)
+        found, note = extract_card_checked(f)
+        if found is None or note == "rough":
+            continue
+        m = index.match(found[0])
+        if m.confident(60, 8):
+            assert m.card_id == top, f"scene {i}: top card {top} confidently mistaken for {m.card_id}"
+            right += 1
+    assert right >= 25
 
 
 def test_card_back_is_recognised_without_reading(demo, tmp_path):

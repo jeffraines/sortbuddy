@@ -65,7 +65,8 @@ class Identifier:
             return None, False
         return m.card_id, m.distance <= SURE_DISTANCE and m.margin >= SURE_MARGIN
 
-    def identify(self, card: np.ndarray, check_foil: bool = False, needs: set | None = None) -> Result | None:
+    def identify(self, card: np.ndarray, check_foil: bool = False, needs: set | None = None,
+                 careful: bool = False) -> Result | None:
         """Safe to call from a worker thread (doesn't touch the catalog file).
 
         Foil is per copy, not per card: with `check_foil`, a card recognised
@@ -75,10 +76,16 @@ class Identifier:
         alone answers them (game, set, number, language, foil, face), the
         card isn't looked up or read further: much faster, but it isn't
         added to your list either.
+
+        `careful`: the card's outline wasn't clean (e.g. the top card of a
+        messy stack), so the picture may include bits of other cards. Only
+        a near-exact picture match counts, and nothing is learned from it.
         """
         start = time.time()
         steps: list[str] = []
         known, sure = self.known(card)
+        if careful and not sure:
+            known = None
         if known and self.catalog[known].get("face") == "back":
             return Result(known, dict(self.catalog[known].fields), "known", time.time() - start)
         quick = None
@@ -120,7 +127,7 @@ class Identifier:
             steps.append(f"lookup {time.time() - t:.1f}s")
             if prop.found:
                 return Result(prop.card_id, prop.fields, "bottom line", time.time() - start, True,
-                              {"image": quick.upright, "steps": steps})
+                              {"image": quick.upright, "steps": steps, "careful": careful})
 
         t = time.time()
         full = ocr.read_card(card, local_names=False)
@@ -134,7 +141,7 @@ class Identifier:
             # name. A wrong card is worse than a "?".
             if prop.found and (prop.kind == "ok" or _similar(name, prop.fields.get("name", "")) >= 0.85):
                 return Result(prop.card_id, prop.fields, "name", time.time() - start, True,
-                              {"image": full.upright, "steps": steps})
+                              {"image": full.upright, "steps": steps, "careful": careful})
         self.last_steps = steps
         return None
 
@@ -157,7 +164,7 @@ class Identifier:
         from .cli import save_reference
 
         img = result.extra.get("image", card)
-        if result.how == "known":
+        if result.how == "known" or result.extra.get("careful"):
             return
         existing = self.catalog.get(result.card_id)
         has_photo = existing is not None and self.catalog.image_path(existing) and \
