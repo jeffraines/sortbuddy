@@ -89,6 +89,12 @@ def _strip_ocr():
     return _strip_engine
 
 
+def installed() -> bool:
+    """Is the OCR package there? (Doesn't load the models, which takes a moment.)"""
+    import importlib.util
+    return importlib.util.find_spec("rapidocr_onnxruntime") is not None
+
+
 def available() -> bool:
     try:
         _ocr()

@@ -428,9 +428,12 @@ def test_card_back_is_recognised_without_reading(demo, tmp_path):
     assert Rule("face == back and game == magic")(Card(r.card_id, r.fields))
 
 
-def test_quick_path_when_rule_only_needs_the_bottom_line(demo, tmp_path):
-    from sortbuddy import ocr
+def test_quick_path_when_rule_only_needs_the_bottom_line(demo, tmp_path, monkeypatch):
+    from sortbuddy import lookup, ocr
     from sortbuddy.identify import Identifier
+
+    # The demo set "DEMO" isn't real: pretend the list of real sets is unavailable.
+    monkeypatch.setattr(lookup, "known_set", lambda code: None)
 
     if not ocr.available():
         pytest.skip("rapidocr_onnxruntime not installed")
@@ -444,6 +447,10 @@ def test_quick_path_when_rule_only_needs_the_bottom_line(demo, tmp_path):
     img = cv2.imread(str(catalog.image_path(catalog["DEMO-004"])))
     r = ident.identify(extract_card(fake_photo(img, random.Random(2)))[0], needs={"game"})
     assert r.how == "quick" and r.fields["set"] == "DEMO" and r.fields["game"] == "magic" and not r.new
+    # A set code that's known to be fake (a misread) doesn't take the quick path.
+    monkeypatch.setattr(lookup, "known_set", lambda code: False)
+    with pytest.raises(AssertionError, match="shouldn't need a lookup"):
+        ident.identify(extract_card(fake_photo(img, random.Random(2)))[0], needs={"game"})
 
 
 def test_lighting_verdicts(demo):

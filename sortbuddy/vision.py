@@ -13,6 +13,10 @@ import numpy as np
 # Standard TCG card is 63 x 88 mm. Warped cards are rendered at this size.
 CARD_W, CARD_H = 315, 440
 CARD_ASPECT = CARD_H / CARD_W  # ~1.397
+# A card never fills more than this share of the picture; anything bigger
+# (the floor of a box, a playmat) is the surroundings.
+MAX_CARD_FRAC = 0.5
+
 # Cards are cut out of the full-resolution frame at this size: enough detail
 # to read the small print. Fingerprinting shrinks them back down.
 WARP_W, WARP_H = 2 * CARD_W, 2 * CARD_H
@@ -64,6 +68,17 @@ def _card_shaped(quad: np.ndarray, contour_area: float) -> bool:
     return quad_area > 0 and 0.85 < contour_area / quad_area < 1.05
 
 
+def _straight(contour: np.ndarray, quad: np.ndarray, area: float) -> bool:
+    """A card's edges are straight lines; the outline of a stack has steps
+    where the cards underneath stick out. Simulated: a single card's outline
+    stays within ~0.4% of its size of the fitted rectangle (90% of points),
+    a stack's strays 1.3-6%."""
+    pts = contour.reshape(-1, 2)[::2].astype(np.float32)
+    poly = order_corners(quad).reshape(-1, 1, 2)
+    dev = np.array([abs(cv2.pointPolygonTest(poly, (float(x), float(y)), True)) for x, y in pts])
+    return float(np.percentile(dev, 90)) <= 0.008 * np.sqrt(area)
+
+
 def find_card_checked(frame: np.ndarray, min_area_frac: float = 0.05) -> tuple[np.ndarray | None, str]:
     """Locate the (top) card. Returns (corners or None, note), note being:
 
@@ -89,23 +104,29 @@ def find_card_checked(frame: np.ndarray, min_area_frac: float = 0.05) -> tuple[n
         return None, ""
 
     frame_area = gray.shape[0] * gray.shape[1]
+    fh, fw = gray.shape
     clean, rough, biggest_blob = [], None, 0.0
-    for c, (_, _, _, parent) in zip(contours, hierarchy[0]):
+    for c in contours:
         area = cv2.contourArea(c)
-        if area < min_area_frac * frame_area:
-            continue
+        if area < min_area_frac * frame_area or area > MAX_CARD_FRAC * frame_area:
+            continue  # too small, or too big to be a card (e.g. the floor of a box)
+        x, y, bw, bh = cv2.boundingRect(c)
+        if x <= 2 or y <= 2 or x + bw >= fw - 3 or y + bh >= fh - 3:
+            continue  # runs off the picture: box walls, the table edge, a hand
         quad = _quad(c)
         (w, h) = cv2.minAreaRect(quad)[1]
         if min(w, h) == 0:
             continue
         aspect = max(w, h) / min(w, h)
-        if parent == -1:
-            biggest_blob = max(biggest_blob, area)
-            if abs(aspect - CARD_ASPECT) <= 0.35 and (rough is None or area > rough[0]):
-                rough = (area, quad)
+        # The biggest card-sized shape (e.g. a whole small stack) is the fallback
+        # when no clean outline is found. Not just outermost shapes: in a box,
+        # the outermost one is the box floor, already skipped above.
+        biggest_blob = max(biggest_blob, area)
+        if abs(aspect - CARD_ASPECT) <= 0.35 and (rough is None or area > rough[0]):
+            rough = (area, quad)
         hull_area = cv2.contourArea(cv2.convexHull(c))
         solid = hull_area > 0 and area / hull_area > 0.975  # no dents (two overlapping cards: <= 0.97)
-        if abs(aspect - CARD_ASPECT) <= 0.25 and solid and _card_shaped(quad, area):
+        if abs(aspect - CARD_ASPECT) <= 0.25 and solid and _card_shaped(quad, area) and _straight(c, quad, area):
             clean.append((area, quad))
 
     # A clean outline must be a good part of the biggest shape: the top card of

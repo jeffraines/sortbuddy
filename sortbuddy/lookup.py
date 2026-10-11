@@ -283,6 +283,23 @@ def riftcodex(name: str, set_code: str | None = None, number: int | None = None,
 RIFTBOUND_SETS = {"OGN", "OGS", "SFD", "UNL", "VEN", "OPP", "PR", "JDG"}
 
 
+def known_set(set_code: str) -> bool | None:
+    """Is this a real set code? None if we can't tell (offline, no cached list).
+    Catches misreads like "COD" for "FRA" on the fast path."""
+    code = set_code.upper()
+    if code in RIFTBOUND_SETS:
+        return True
+
+    def fetch():
+        data = _get("https://api.scryfall.com/sets")
+        return [x["code"].upper() for x in (data or {}).get("data", [])]
+    try:
+        codes = _cached_set("mtg-sets", fetch)
+    except LookupError_:
+        return None
+    return (code in codes) if codes else None
+
+
 def auto(name: str, set_code: str | None = None, number: int | None = None) -> tuple[dict, bool] | None:
     """Pick the database from the set code: Riftbound sets go to Riftcodex,
     everything else to Scryfall (then Riftcodex by name as a last resort)."""

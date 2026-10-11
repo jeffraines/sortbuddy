@@ -110,7 +110,8 @@ class Identifier:
         t = time.time()
         quick = quick or ocr.read_collector(card)
         steps.append(f"bottom line {time.time() - t:.1f}s")
-        if needs is not None and needs <= QUICK_FIELDS and quick.set_code:
+        if (needs is not None and needs <= QUICK_FIELDS and quick.set_code
+                and lookup.known_set(quick.set_code) is not False):
             fields = {"face": "front", "set": quick.set_code,
                       "game": "riftbound" if quick.set_code.upper() in lookup.RIFTBOUND_SETS else "magic"}
             if quick.number is not None:
@@ -125,7 +126,16 @@ class Identifier:
             t = time.time()
             prop = propose(quick, "", "", self.source, {})
             steps.append(f"lookup {time.time() - t:.1f}s")
-            if prop.found:
+            confirmed = prop.found
+            if prop.found and careful:
+                # Rough outline: the strip may mix the top card's set with the
+                # number of a card underneath. Only accept if the name on the
+                # card matches too.
+                t = time.time()
+                check = ocr.read_card(card, local_names=False)
+                steps.append(f"name check {time.time() - t:.1f}s")
+                confirmed = any(_similar(n, prop.fields.get("name", "")) >= 0.75 for n in check.names[:4])
+            if confirmed:
                 return Result(prop.card_id, prop.fields, "bottom line", time.time() - start, True,
                               {"image": quick.upright, "steps": steps, "careful": careful})
 

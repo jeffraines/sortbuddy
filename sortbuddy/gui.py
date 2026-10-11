@@ -46,10 +46,11 @@ KNOWN_FIELDS = {"id", "name", "set", "set_name", "number", "rarity", "cost", "ma
 NO_LOOKUP = "Off (fill in details yourself)"
 RESOLUTIONS = ["1280 × 720", "1920 × 1080", "640 × 480"]
 DEFAULTS = {"catalog": str(Path("mycards") / "catalog.csv"), "camera": 0, "focus": "",
-            "rule": "cost <= 3", "lookup": "auto", "version": 3}
+            "rule": "cost <= 3", "lookup": "auto", "version": 4}
 
 KIND_COLORS = {"ok": GREEN, "warn": AMBER, "error": RED, "": DIM}
 SAME_CARD = 85  # picture difference (bits of 256) still counted as the same card being moved
+REMOVED_AFTER = 1.0  # seconds with no card in view before the next card counts as new
 
 # What the details panel shows, roughly in the order the parts appear on a
 # card. Rows without a value for the current card are hidden, so Magic and
@@ -127,6 +128,7 @@ class App:
         self.frame = None
         self.sweep = None
         self.track = None
+        self.starting = None
         self.frame_times: list[float] = []
         self.pending = None  # captured card waiting to be saved
         self.added = 0
@@ -148,6 +150,9 @@ class App:
         self.refresh_count()
         self.show_panel("idle")
         root.after(50, self.poll)
+        # Load the text-reading models now, in the background, so the first
+        # card doesn't wait for them.
+        self.background(lambda: ocr.installed() and (ocr.available(), ocr._strip_ocr()))
 
     # ------------------------------------------------------------------ look
     def _style(self) -> None:
@@ -188,8 +193,9 @@ class App:
         r.rowconfigure(0, weight=1)
 
         # ---- left: settings
-        side = ttk.Frame(r, padding=(18, 16))
+        side = ttk.Frame(r, padding=(18, 16), width=370)
         side.grid(row=0, column=0, sticky="ns")
+        side.grid_propagate(False)  # fixed width: long status text mustn't shift the layout
         side.columnconfigure(0, weight=1)
         ttk.Label(side, text="SortBuddy", style="Title.TLabel").grid(sticky="w")
         ttk.Label(side, text="Bulk card sorter", style="Dim.TLabel").grid(sticky="w", pady=(0, 14))
@@ -272,6 +278,9 @@ class App:
         self.light_label = tk.Label(side, text="", bg=SIDE, fg=DIM, font=(FONT, 10), anchor="w", justify="left",
                                     wraplength=310)
         self.light_label.grid(sticky="ew", pady=(4, 0))
+        self.gauge = tk.Canvas(side, width=330, height=30, bg=SIDE, highlightthickness=0)
+        self.gauge.grid(sticky="w", pady=(2, 0))
+        self._draw_gauge(None)
         self.keep_tuned = tk.BooleanVar(value=bool(self.settings.get("keep_tuned", True)))
         tk.Checkbutton(side, text="Keep the camera tuned while running", variable=self.keep_tuned, bg=SIDE, fg=DIM,
                        selectcolor=PANEL, activebackground=SIDE, activeforeground=FG, highlightthickness=0, bd=0,
@@ -316,12 +325,17 @@ class App:
         mid.grid(row=0, column=1, sticky="nsew")
         mid.columnconfigure(0, weight=1)
         mid.rowconfigure(0, weight=1)
-        self.view = tk.Label(mid, bg="#000000", fg=DIM, font=(FONT, 14),
+        holder = tk.Frame(mid, bg="#000000")
+        holder.grid(row=0, column=0, sticky="nsew")
+        # The picture is placed inside a fixed area: a label sized by its own
+        # picture grows a little each frame, which made the window jump.
+        self.view = tk.Label(holder, bg="#000000", fg=DIM, font=(FONT, 14),
                              text="Camera is off\n\nClick “Start adding cards” or “Start sorting”")
-        self.view.grid(row=0, column=0, sticky="nsew")
+        self.view.place(relx=0, rely=0, relwidth=1, relheight=1)
         self.view.bind("<Button-1>", lambda e: self.view.focus_set())
         self.status_var = tk.StringVar(value="")
-        self.status = tk.Label(mid, textvariable=self.status_var, bg=BG, fg=DIM, font=(FONT, 11), anchor="w")
+        self.status = tk.Label(mid, textvariable=self.status_var, bg=BG, fg=DIM, font=(FONT, 11), anchor="w",
+                               width=1)  # width=1: long messages are cut, not widening the window
         self.status.grid(row=1, column=0, sticky="ew", pady=(8, 0))
 
         # ---- right: context panel
@@ -475,7 +489,9 @@ class App:
             saved["lookup"] = "auto"  # older versions saved "off" without anyone choosing it
         if saved.get("version", 1) < 3:
             saved.pop("resolution", None)  # 1280 x 720 is the new default: much faster on most webcams
-        return {**DEFAULTS, **saved, "version": 3}
+        if saved.get("version", 1) < 4:
+            saved["sound"] = False  # it beeped for every repeat decision; off until chosen again
+        return {**DEFAULTS, **saved, "version": 4}
 
     def _save_settings(self) -> None:
         data = {"catalog": self.catalog_var.get(), "camera": self._camera_index(),
@@ -484,7 +500,7 @@ class App:
                 "exposure": "" if self.auto_exposure.get() else int(self.exposure_scale.get()),
                 "keep_tuned": self.keep_tuned.get(),
                 "sharp_base": getattr(self, "sharp_base", None) or self.settings.get("sharp_base"),
-                "lookup": self.lookup_names.get(self.lookup_var.get(), ""), "version": 3}
+                "lookup": self.lookup_names.get(self.lookup_var.get(), ""), "version": 4}
         try:
             SETTINGS.write_text(json.dumps(data, indent=2), encoding="utf-8")
         except OSError:
@@ -543,6 +559,8 @@ class App:
 
     # ------------------------------------------------------------- run modes
     def toggle(self, mode: str) -> None:
+        if self.starting:  # still opening the camera: ignore extra clicks
+            return
         if self.mode == mode:
             self.stop()
         else:
@@ -574,7 +592,7 @@ class App:
             index = FingerprintIndex.load(idx) if idx.exists() else FingerprintIndex([], np.zeros((0, 32), np.uint8))
             source_key = self.lookup_names.get(self.lookup_var.get(), "")
             source = lookup.SOURCES[source_key][1] if source_key else None
-            use_ocr = ocr.available()
+            use_ocr = ocr.installed()
             if (source is None or not use_ocr) and len(index) == 0:
                 messagebox.showerror("SortBuddy", "With card details lookup off (or OCR not installed), only cards "
                                      "already in your list can be recognised, and this list is empty.")
@@ -583,8 +601,8 @@ class App:
             self.check_foil = any(f in ("foil", "price") for f in self.rule.fields)
             self.session = Session(self.catalog)
             self.track = None
-            self.last_hash = None
-            self.empty = 0
+            self.gone_since = None
+            self.last_card_id, self.last_yes = None, None
             self.unknown = 0
             self.log_path = path.parent / "sessions" / f"{time.strftime('%Y%m%d-%H%M%S')}.csv"
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -601,7 +619,7 @@ class App:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 self.catalog = Catalog([], path.parent)
             self.source_key = self.lookup_names.get(self.lookup_var.get(), "")
-            self.use_ocr = ocr.available()
+            self.use_ocr = ocr.installed()
             if not self.use_ocr:
                 print("Tip: pip install rapidocr_onnxruntime to read card names automatically.\n")
             self.added = 0
@@ -610,11 +628,26 @@ class App:
 
         focus = self.focus_var.get().strip()
         width, height = (int(x) for x in self.res_var.get().split(" × "))
-        self.say(f"Opening camera {self._camera_index()}…")
-        self.root.update()
-        cam = Camera(self._camera_index(), width, height, focus=int(focus) if focus.isdigit() else None, quiet=True)
+        index = self._camera_index()
+        self.say(f"Starting camera {index}… (a few seconds)", AMBER)
+        for b in (self.enroll_btn, self.sort_btn):
+            b.state(["disabled"])
+        self.starting = mode
+
+        def open_camera():  # opening a webcam on Windows can take seconds: not in the window's thread
+            cam = Camera(index, width, height, focus=int(focus) if focus.isdigit() else None, quiet=True)
+            self.events.put(("done", lambda: self._camera_ready(cam, mode)))
+        self.background(open_camera)
+
+    def _camera_ready(self, cam, mode: str) -> None:
+        for b in (self.enroll_btn, self.sort_btn):
+            b.state(["!disabled"])
+        if self.starting != mode:  # stopped or window closing meanwhile
+            cam.release()
+            return
+        self.starting = None
         if not cam.ok:
-            self.say(f"Can't open camera {self._camera_index()}. Try another number or “Find cameras”.", RED)
+            self.say(f"Can't open camera {cam.index}. Try another number or “Find cameras”.", RED)
             return
         self.cam = cam
         self.mode = mode
@@ -636,6 +669,7 @@ class App:
         self.loop()
 
     def stop(self) -> None:
+        self.starting = None
         self.sweep = None
         self.cam_info.configure(text="")
         if self.loop_id:
@@ -741,6 +775,7 @@ class App:
                 self.sharp = sharpness(self.found[0])
                 light = assess(self.found[0])
                 self.light_label.configure(text=light.message, fg=GREEN if light.ok else AMBER)
+                self._draw_gauge(light)
                 self.lights = (self.lights + [light.verdict])[-4:]
                 if self.problem == "":
                     self.sharps = (self.sharps + [self.sharp])[-20:]
@@ -750,6 +785,7 @@ class App:
                 # light washes the card's edge out too, so this still catches it.
                 h, w = self.frame.shape[:2]
                 light = assess(self.frame[h // 4: 3 * h // 4, w // 4: 3 * w // 4])
+                self._draw_gauge(light)
                 if light.verdict in ("bright", "glare") and light.washed_out > 0.05:
                     self.light_label.configure(text=f"Much too bright: {light.washed_out:.0%} of the picture is "
                                                     "washed out (no card edge visible)", fg=AMBER)
@@ -764,8 +800,29 @@ class App:
             fps = (len(self.frame_times) - 1) / max(1e-6, self.frame_times[-1] - self.frame_times[0])
             sharp = f"  ·  sharpness {self.sharp:.0f}" if self.found and self.sharp is not None else ""
             codec = getattr(self.cam, "codec", "")
-            slow = "  (slow: try 1280 × 720)" if fps < 12 and len(self.frame_times) > 10 else ""
+            slow = "  slow" if fps < 12 and len(self.frame_times) > 10 else ""
             self.cam_info.configure(text=f"{fps:.0f} fps {codec}{sharp}{slow}")
+
+    def _draw_gauge(self, light) -> None:
+        """A bar from dark to bright with the good range in green and a marker
+        for the card's brightness, plus how much of it is washed out."""
+        g = self.gauge
+        g.delete("all")
+        x0, x1, y0, y1 = 2, 328, 4, 16
+        sx = lambda v: x0 + (x1 - x0) * v / 255  # noqa: E731
+        g.create_rectangle(x0, y0, sx(70), y1, fill="#2b3550", width=0)
+        g.create_rectangle(sx(70), y0, sx(205), y1, fill="#24563a", width=0)
+        g.create_rectangle(sx(205), y0, x1, y1, fill="#5c4a22", width=0)
+        g.create_text(x0, 25, text="dark", anchor="w", fill=FAINT, font=(FONT, 8))
+        g.create_text((sx(70) + sx(205)) / 2, 25, text="good", fill=FAINT, font=(FONT, 8))
+        g.create_text(x1, 25, text="bright", anchor="e", fill=FAINT, font=(FONT, 8))
+        if light is None:
+            return
+        x = sx(min(255, light.brightness))
+        g.create_polygon(x - 6, y0 - 4, x + 6, y0 - 4, x, y1 - 2, fill=FG if light.ok else AMBER, outline="")
+        if light.washed_out > 0.001:
+            w = min(1.0, light.washed_out * 10) * (x1 - x0)  # 10% washed out fills the bar
+            g.create_rectangle(x0, y1 + 1, x0 + w, y1 + 3, fill=RED, width=0)
 
     # exposure
     def _show_exposure(self) -> None:
@@ -879,8 +936,8 @@ class App:
             self.focus_scale.set(best)
         self._focus_slid(self.focus_scale.get())
         self._save_settings()
-        if self.mode == "sort":  # don't decide whatever was in view while settings moved
-            self.track, self.last_hash = None, None
+        if self.mode == "sort":  # re-check whatever is in view (it isn't counted twice)
+            self.track = None
         self.say(message, GREEN if best is not None else DIM)
 
     def _keep_tuned(self) -> None:
@@ -928,25 +985,32 @@ class App:
     def _sort_step(self):
         """Track the card in view; identify it once it holds still.
 
-        A card is decided once. It only counts again if it's clearly a
-        different card, or the view was empty for a moment (taken away),
-        so nudging it or a flicker in detection doesn't re-decide it."""
+        Each card is decided once. It only counts again after the view has
+        been empty for a second (taken away), or when a clearly different
+        card has replaced it and held steady. Flicker, nudges, light changes
+        or a misread never make it count twice."""
+        now = time.time()
         if not self.found:
-            self.empty += 1
-            if self.empty >= 8:  # card taken away: the next card is new, even another copy
-                self.track, self.last_hash = None, None
+            if self.gone_since is None:
+                self.gone_since = now
+            if self.track and now - self.gone_since >= REMOVED_AFTER:
+                self.track = None          # card taken away
+                self.last_card_id = None   # the same card again is another copy
             if not self.track:
                 self.say("Show a card", DIM)
             return None
-        self.empty = 0
+        self.gone_since = None
         h = phash(self.found[0])
         t = self.track
-        if t and hamming(h, t["hash"]) <= SAME_CARD:
-            t.update(stable=t["stable"] + 1, hash=h)
-        elif self.last_hash is not None and hamming(h, self.last_hash) <= SAME_CARD and t:
-            t.update(stable=t["stable"] + 1, hash=h)  # same card as just decided, only moved
-        else:
-            t = self.track = {"hash": h, "stable": 1, "state": "new", "yes": None}
+        if t is None:
+            t = self.track = {"hash": h, "stable": 1, "state": "new", "yes": None, "different": 0}
+        elif hamming(h, t["hash"]) <= SAME_CARD:
+            t.update(stable=t["stable"] + 1, hash=h, different=0)
+        elif self.problem == "":
+            # Looks different with a clean outline: a new card, if it stays that way.
+            t["different"] += 1
+            if t["different"] >= 5:
+                t = self.track = {"hash": h, "stable": 5, "state": "new", "yes": None, "different": 0}
         if t["state"] == "new" and t["stable"] >= 3:
             t["state"] = "pending"
             t["job"] = t.get("job", 0) + 1
@@ -963,8 +1027,7 @@ class App:
             self.background(work)
         if t["state"] == "pending":
             self.say("Identifying…" + ("  (card edge unclear: reading the bottom line)" if self.problem == "rough"
-                                       else "  (more than one card in view: using the biggest)"
-                                       if self.problem == "several" else ""), AMBER)
+                                       else ""), AMBER)
             return (66, 185, 245)
         if t["state"] == "done":
             yes = t.get("yes")
@@ -975,7 +1038,6 @@ class App:
         if self.mode != "sort" or track.get("job") != job or track["state"] != "pending":
             return  # stale: the card was re-decided (e.g. a card back was just taught)
         track["state"] = "done"
-        self.last_hash = track["hash"]
         if result is None:
             self.unknown += 1
             self.unknown_streak += 1
@@ -997,11 +1059,17 @@ class App:
             self.identifier.learn(result, img)
             self.refresh_count()
             self.rule_label.configure(text=f"{self.rule_description}   ·   {len(self.catalog)} card{'s' * (len(self.catalog) != 1)} in your list")
+        if result.card_id == self.last_card_id:
+            # Same card as the one just decided, never taken away (a misread
+            # or a wobble made it look new): don't count it twice.
+            track["yes"] = self.last_yes
+            return
         if result.how == "quick" and result.card_id in self.catalog.cards:
             result.fields["name"] = self.catalog[result.card_id].name  # a nicer name if we know it
         card = Card(result.card_id, result.fields)
         yes = bool(self.rule(card))
         track["yes"] = yes
+        self.last_card_id, self.last_yes = result.card_id, yes
         self.session.record(result.card_id, yes, str(self.rule))
         self.session.save_log(self.log_path)
         self._show_verdict(card.name, yes)
