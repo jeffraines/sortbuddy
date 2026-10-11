@@ -7,8 +7,11 @@ it takes around half a second a card.
 
 from __future__ import annotations
 
+import hashlib
 import re
+import urllib.request
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -41,6 +44,7 @@ class CardText:
     foil: bool | None = None  # from the Magic bottom line: "LCI ★ EN" foil, "FRA • EN" not; None = can't tell
     lines: list[Line] = field(default_factory=list)
     upright: np.ndarray | None = None  # the card image turned the right way up
+    local_names: list[str] = field(default_factory=list)  # name in the card's own language, e.g. Korean
 
     @property
     def name(self) -> str:
@@ -79,8 +83,60 @@ def available() -> bool:
         return False
 
 
-def _read(img: np.ndarray) -> list[Line]:
-    result, _ = _ocr()(img)
+# Extra text-recognition models for languages the default model can't read.
+# Downloaded once, the first time a card in that language is captured, and
+# checked against the hash of the file SortBuddy was tested with.
+MODELS_DIR = Path.home() / ".sortbuddy" / "models"
+_KOREAN = {
+    "file": "korean_PP-OCRv5_rec_mobile.onnx",
+    "url": "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/master/"
+           "onnx/PP-OCRv5/rec/korean_PP-OCRv5_rec_mobile.onnx",
+    "sha256": "cd6e2ea50f6943ca7271eb8c56a877a5a90720b7047fe9c41a2e541a25773c9b",
+    "size_mb": 13,
+    "script": re.compile("[\uac00-\ud7a3]"),  # Hangul syllables
+}
+LANGUAGE_MODELS = {"KR": _KOREAN, "KO": _KOREAN}
+_lang_engines: dict[str, object] = {}
+
+
+def _download_model(spec: dict) -> Path:
+    path = MODELS_DIR / spec["file"]
+    if path.exists():
+        return path
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"Downloading {spec['file']} ({spec['size_mb']} MB, one time)...")
+    tmp = path.with_suffix(".part")
+    req = urllib.request.Request(spec["url"], headers={"User-Agent": "SortBuddy/0.1"})
+    with urllib.request.urlopen(req, timeout=120) as resp, tmp.open("wb") as f:
+        while chunk := resp.read(1 << 20):
+            f.write(chunk)
+    digest = hashlib.sha256(tmp.read_bytes()).hexdigest()
+    if digest != spec["sha256"]:
+        tmp.unlink()
+        raise OcrUnavailable(f"downloaded {spec['file']} doesn't match the expected file")
+    tmp.replace(path)
+    return path
+
+
+def _language_engine(language: str):
+    """OCR engine for a card language, or None if not needed / not available."""
+    spec = LANGUAGE_MODELS.get(language)
+    if spec is None:
+        return None
+    if spec["file"] not in _lang_engines:
+        try:
+            from rapidocr_onnxruntime import RapidOCR
+            engine = RapidOCR(rec_model_path=str(_download_model(spec)))
+            engine.use_angle_cls = False
+        except Exception as e:  # noqa: BLE001 - offline etc.: carry on without it
+            print(f"Can't read {language} text: {e}")
+            return None
+        _lang_engines[spec["file"]] = engine
+    return _lang_engines[spec["file"]]
+
+
+def _read(img: np.ndarray, engine=None) -> list[Line]:
+    result, _ = (engine or _ocr())(img)
     lines = []
     for box, text, score in result or []:
         pts = np.array(box, dtype=np.float32)
@@ -241,8 +297,15 @@ def read_card(card: np.ndarray) -> CardText:
     set_code, number = _collector(best, h, w)
     details = _details(best, h, w)
     names = _name_candidates(best, h)
-    if details.get("language", "EN") != "EN":
-        # The OCR model reads English (and Chinese); on e.g. a Korean card the
-        # name comes out as junk. Leave it blank; the lookup finds it by number.
+    local_names = []
+    language = details.get("language", "EN")
+    if language != "EN":
+        # The default model reads English (and Chinese); on e.g. a Korean card
+        # its name guesses are junk. Read the card again with that language's
+        # model for the printed name; the lookup supplies the English one.
         names = [n for n in names if n.isascii()]
-    return CardText(names, set_code, number, details, _foil(best, h, w), best, best_img)
+        engine = _language_engine(language)
+        if engine is not None:
+            script = LANGUAGE_MODELS[language]["script"]
+            local_names = [n for n in _name_candidates(_read(best_img, engine), h) if script.search(n)]
+    return CardText(names, set_code, number, details, _foil(best, h, w), best, best_img, local_names)

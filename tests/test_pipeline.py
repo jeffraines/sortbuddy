@@ -286,3 +286,22 @@ def test_language_read_from_riftbound_bottom_line():
     lines = [Line("OGN · 114/298 · KR", 0.9, 20, 855, 300, 873)]
     assert _collector(lines, 880, 630) == ("OGN", 114)
     assert _details(lines, 880, 630)["language"] == "KR"
+
+
+def test_korean_card_keeps_english_and_korean_names():
+    from sortbuddy.ocr import CardText
+    from sortbuddy.proposal import propose
+
+    def fake_riftcodex(name, set_code, number):
+        assert (set_code, number) == ("OGN", 114)
+        return {"name": "Progress Day", "set": "OGN", "number": 114, "energy": 6, "domain": ["mind"]}, True
+
+    text = CardText(names=[], set_code="OGN", number=114, extra={"language": "KR"},
+                    local_names=["진보의 날", "카드 4장을 뽑습니다."])
+    p = propose(text, "", "card-001", fake_riftcodex, {})
+    assert p.card_id == "OGN-114"
+    assert p.fields["name"] == "Progress Day" and p.fields["name_kr"] == "진보의 날"
+    assert p.fields["language"] == "KR"
+    # Lookup off: the Korean name is the name.
+    p = propose(text, "", "card-001", None, {})
+    assert p.fields["name"] == "진보의 날" and p.card_id == "OGN-114"

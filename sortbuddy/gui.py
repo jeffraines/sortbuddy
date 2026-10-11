@@ -52,6 +52,7 @@ def _join(v):
 
 
 CARD_PARTS = [
+    ("Name on card", lambda f: next((v for k, v in f.items() if k.startswith("name_")), "")),
     ("Mana cost", lambda f: " ".join(x for x in (f.get("mana_cost"), f"(total {f['cost']})" if "cost" in f else "") if x)
      if "mana_cost" in f else ""),
     ("Energy", lambda f: _join(f.get("energy", ""))),

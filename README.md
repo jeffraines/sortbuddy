@@ -145,6 +145,15 @@ Data comes from [Riftcodex](https://api.riftcodex.com/docs), a community
 Riftbound card database. SortBuddy downloads a set's card list the first
 time it needs it (a few requests) and keeps it in memory while enrolling.
 
+### Korean (and other non-English) cards
+
+The language code on the bottom line (`KR`) tells SortBuddy to read the
+card again with a Korean text model, so the printed name is saved as
+`name_kr` (진보의 날) next to the English `name` from the lookup (Progress
+Day). The model (13 MB) downloads automatically the first time you capture
+a Korean card, into `~/.sortbuddy/models`, and is checked against the
+hash of the file SortBuddy was tested with.
+
 ## Magic cards: details filled in automatically
 
 Choose **Card details from: Magic: The Gathering (Scryfall)** in the app

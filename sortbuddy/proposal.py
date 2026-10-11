@@ -73,6 +73,13 @@ def propose(text, name: str, auto_id: str, source=None, cache: dict | None = Non
 
     if text and text.extra.get("language"):
         fields["language"] = text.extra["language"]
+    if text and text.local_names:
+        # e.g. name_kr = 진보의 날 next to the English name
+        fields[f"name_{text.extra.get('language', 'local').lower()}"] = text.local_names[0]
+        if not fields.get("name"):
+            fields["name"] = text.local_names[0]
+            if card_id == auto_id:
+                card_id = slug(text.local_names[0]) or auto_id
     foil = text.foil if text else None
     if foil is not None:
         fields["foil"] = "yes" if foil else "no"
