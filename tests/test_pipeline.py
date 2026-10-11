@@ -444,3 +444,16 @@ def test_quick_path_when_rule_only_needs_the_bottom_line(demo, tmp_path):
     img = cv2.imread(str(catalog.image_path(catalog["DEMO-004"])))
     r = ident.identify(extract_card(fake_photo(img, random.Random(2)))[0], needs={"game"})
     assert r.how == "quick" and r.fields["set"] == "DEMO" and r.fields["game"] == "magic" and not r.new
+
+
+def test_lighting_verdicts(demo):
+    from sortbuddy.lighting import assess
+
+    _, catalog, _ = demo
+    card = cv2.resize(cv2.imread(str(catalog.image_path(catalog["DEMO-003"]))), (630, 880)).astype(np.float32)
+    assert assess(card.astype(np.uint8)).verdict == "good"
+    assert assess(np.clip(card * 0.35, 0, 255).astype(np.uint8)).verdict == "dark"
+    assert assess(np.clip(card * 2.2, 0, 255).astype(np.uint8)).verdict == "bright"
+    glare = card.copy()
+    cv2.circle(glare, (300, 300), 110, (255, 255, 255), -1)   # one white blob, like a lamp reflection
+    assert assess(glare.astype(np.uint8)).verdict == "glare"

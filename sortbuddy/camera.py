@@ -40,6 +40,7 @@ class Camera:
         self.cap.set(cv2.CAP_PROP_FOURCC, mjpg)
         self.cap.set(cv2.CAP_PROP_FPS, 30)
         self.focus: int | None = None
+        self.exposure: int | None = None
         if focus is not None:
             self.set_focus(focus)
 
@@ -59,6 +60,22 @@ class Camera:
     @property
     def size(self) -> str:
         return f"{int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))}x{int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))}"
+
+    # Exposure: on Windows (DirectShow) the value is a power of two in
+    # seconds: -5 = 1/32 s, -7 = 1/128 s. Lower is darker.
+    EXPOSURE_RANGE = (-11, -2)
+
+    def set_exposure(self, value: int | None) -> None:
+        """Manual exposure (see EXPOSURE_RANGE), or None for automatic."""
+        if value is None:
+            self.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.75)  # "auto" (DirectShow/V4L2 convention)
+            self.exposure = None
+            return
+        lo, hi = self.EXPOSURE_RANGE
+        value = max(lo, min(hi, int(value)))
+        self.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)      # "manual"
+        self.cap.set(cv2.CAP_PROP_EXPOSURE, value)
+        self.exposure = value
 
     def set_focus(self, value: int | None) -> None:
         """Manual focus at `value` (0-255), or None for autofocus."""

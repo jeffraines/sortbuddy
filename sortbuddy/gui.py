@@ -29,6 +29,7 @@ from .camera import Camera
 from .catalog import Card, Catalog
 from .fingerprint import FingerprintIndex, hamming, phash, sharpness
 from .identify import Identifier
+from .lighting import assess, glare_mask
 from .proposal import propose
 from .rules import Rule, RuleError
 from .gui_rules import RuleBuilder
@@ -238,10 +239,37 @@ class App:
         self._show_focus()
         row = ttk.Frame(side)
         row.grid(sticky="ew", pady=(6, 0))
-        self.best_focus_btn = ttk.Button(row, text="Find best focus", command=self.find_best_focus, width=17)
+        ttk.Label(row, text="Exposure").pack(side="left")
+        saved_exp = str(self.settings.get("exposure", ""))
+        self.auto_exposure = tk.BooleanVar(value=not saved_exp.lstrip("-").isdigit())
+        tk.Checkbutton(row, text="Auto", variable=self.auto_exposure, command=self._exposure_changed, bg=SIDE,
+                       fg=FG, selectcolor=PANEL, activebackground=SIDE, activeforeground=FG, highlightthickness=0,
+                       bd=0, font=(FONT, 10)).pack(side="left", padx=(6, 4))
+        ttk.Button(row, text="◀", width=2, style="Small.TButton", command=lambda: self._nudge_exposure(-1)).pack(
+            side="left")
+        lo, hi = Camera.EXPOSURE_RANGE
+        self.exposure_scale = ttk.Scale(row, from_=lo, to=hi, command=lambda v: self._exposure_changed(), length=100)
+        self.exposure_scale.pack(side="left", padx=2)
+        ttk.Button(row, text="▶", width=2, style="Small.TButton", command=lambda: self._nudge_exposure(1)).pack(
+            side="left")
+        self.exposure_label = ttk.Label(row, text="", width=5, style="Dim.TLabel")
+        self.exposure_label.pack(side="left", padx=4)
+        self.exposure_scale.set(int(saved_exp) if saved_exp.lstrip("-").isdigit() else -6)
+        self._show_exposure()
+
+        row = ttk.Frame(side)
+        row.grid(sticky="ew", pady=(6, 0))
+        self.best_focus_btn = ttk.Button(row, text="Calibrate camera", command=self.calibrate, width=17)
         self.best_focus_btn.pack(side="left")
         self.cam_info = ttk.Label(row, text="", style="Dim.TLabel")
         self.cam_info.pack(side="left", padx=8)
+        self.light_label = tk.Label(side, text="", bg=SIDE, fg=DIM, font=(FONT, 10), anchor="w", justify="left",
+                                    wraplength=310)
+        self.light_label.grid(sticky="ew", pady=(4, 0))
+        self.keep_tuned = tk.BooleanVar(value=bool(self.settings.get("keep_tuned", True)))
+        tk.Checkbutton(side, text="Keep the camera tuned while running", variable=self.keep_tuned, bg=SIDE, fg=DIM,
+                       selectcolor=PANEL, activebackground=SIDE, activeforeground=FG, highlightthickness=0, bd=0,
+                       font=(FONT, 9)).grid(sticky="w", pady=(2, 0))
 
         section("Card details from")
         self.lookup_names = {NO_LOOKUP: "", **{label: key for key, (label, _) in lookup.SOURCES.items()}}
@@ -447,6 +475,9 @@ class App:
         data = {"catalog": self.catalog_var.get(), "camera": self._camera_index(),
                 "focus": self.focus_var.get().strip(), "rule": self.rule_var.get(),
                 "resolution": self.res_var.get(), "sound": self.sound_var.get(),
+                "exposure": "" if self.auto_exposure.get() else int(self.exposure_scale.get()),
+                "keep_tuned": self.keep_tuned.get(),
+                "sharp_base": getattr(self, "sharp_base", None) or self.settings.get("sharp_base"),
                 "lookup": self.lookup_names.get(self.lookup_var.get(), ""), "version": 3}
         try:
             SETTINGS.write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -588,6 +619,13 @@ class App:
         self.frame_times: list[float] = []
         self.sharp = None
         self.sweep = None
+        self._exposure_changed()
+        self.lights: list[str] = []          # recent light verdicts
+        self.sharps: list[float] = []        # recent sharpness of cards in view
+        self.sharp_base = self.settings.get("sharp_base")  # sharpness right after calibrating
+        self.last_tune = 0.0
+        self.last_refocus = time.time()
+        self.unknown_streak = 0
         self.view.focus_set()
         self.loop()
 
@@ -639,6 +677,10 @@ class App:
             color = (255, 140, 79) if self.found else None  # BGR of ACCENT
             if self.mode == "sort" and not self.sweep:
                 color = self._sort_step()
+            if self.found:  # washed-out parts of the card in red
+                inside = np.zeros(frame.shape[:2], np.uint8)
+                cv2.fillPoly(inside, [self.found[1].astype(np.int32)], 1)
+                frame[glare_mask(frame) & inside.astype(bool)] = (60, 60, 255)
             if self.found and color:
                 k = max(2, frame.shape[1] // 300)
                 cv2.polylines(frame, [self.found[1].astype(int)], True, color, k)
@@ -691,27 +733,80 @@ class App:
         if len(self.frame_times) % 5 == 0:
             if self.found:
                 self.sharp = sharpness(self.found[0])
+                light = assess(self.found[0])
+                self.light_label.configure(text=light.message, fg=GREEN if light.ok else AMBER)
+                self.lights = (self.lights + [light.verdict])[-4:]
+                if self.problem == "":
+                    self.sharps = (self.sharps + [self.sharp])[-20:]
+                self._keep_tuned()
+            else:
+                # No card outline: judge the middle of the picture. Very bright
+                # light washes the card's edge out too, so this still catches it.
+                h, w = self.frame.shape[:2]
+                light = assess(self.frame[h // 4: 3 * h // 4, w // 4: 3 * w // 4])
+                if light.verdict in ("bright", "glare") and light.washed_out > 0.05:
+                    self.light_label.configure(text=f"Much too bright: {light.washed_out:.0%} of the picture is "
+                                                    "washed out (no card edge visible)", fg=AMBER)
+                    self.lights = (self.lights + ["bright"])[-4:]
+                    self._keep_tuned()
+                elif light.verdict == "dark":
+                    self.light_label.configure(text="Too dark to see a card: turn the light up", fg=AMBER)
+                    self.lights = (self.lights + ["dark"])[-4:]
+                    self._keep_tuned()
+                else:
+                    self.light_label.configure(text="Light: put a card under the camera to check", fg=DIM)
             fps = (len(self.frame_times) - 1) / max(1e-6, self.frame_times[-1] - self.frame_times[0])
             sharp = f"  ·  sharpness {self.sharp:.0f}" if self.found and self.sharp is not None else ""
             codec = getattr(self.cam, "codec", "")
             slow = "  (slow: try 1280 × 720)" if fps < 12 and len(self.frame_times) > 10 else ""
             self.cam_info.configure(text=f"{fps:.0f} fps {codec}{sharp}{slow}")
 
-    def find_best_focus(self) -> None:
-        """Step through focus settings and keep the one where the picture is
-        sharpest. Click again to stop."""
+    # exposure
+    def _show_exposure(self) -> None:
+        auto = self.auto_exposure.get()
+        v = int(round(self.exposure_scale.get()))
+        self.exposure_label.configure(text="auto" if auto else (f"1/{2 ** -v}" if v < 0 else str(v)))
+        self.exposure_scale.state(["disabled"] if auto else ["!disabled"])
+
+    def _exposure_changed(self) -> None:
+        self._show_exposure()
+        if self.cam and hasattr(self.cam, "set_exposure"):
+            self.cam.set_exposure(None if self.auto_exposure.get() else int(round(self.exposure_scale.get())))
+
+    def _nudge_exposure(self, step: int) -> None:
+        self.auto_exposure.set(False)
+        lo, hi = Camera.EXPOSURE_RANGE
+        self.exposure_scale.set(max(lo, min(hi, int(round(self.exposure_scale.get())) + step)))
+        self._exposure_changed()
+
+    # calibration: exposure first (detail without washing out), then focus
+    def calibrate(self, focus_only: bool = False) -> None:
+        """Try settings with a card in view and keep the best. Click again to stop."""
         if self.sweep:
-            self._end_sweep("Focus search stopped")
+            self._end_sweep("Calibration stopped")
             return
         if not self.cam:
             messagebox.showinfo("SortBuddy", "Start the camera first (Add cards or Sort), with a card under it.")
             return
+        lo, hi = Camera.EXPOSURE_RANGE
+        if focus_only or not hasattr(self.cam, "set_exposure"):
+            self._start_focus_sweep()
+        else:
+            self.auto_exposure.set(False)
+            self._show_exposure()
+            self.sweep = {"kind": "exposure", "values": list(range(lo, hi + 1)), "i": 0, "wait": 8, "scores": {},
+                          "started": time.time(), "then_focus": True}
+            self.cam.set_exposure(lo)
+        self.best_focus_btn.configure(text="Stop calibrating")
+
+    find_best_focus = calibrate  # old name
+
+    def _start_focus_sweep(self) -> None:
         self.auto_focus.set(False)
         self._show_focus()
-        self.sweep = {"stage": "coarse", "values": list(range(0, 251, 25)), "i": 0, "wait": 8, "scores": {},
-                      "started": time.time()}
+        self.sweep = {"kind": "focus", "stage": "coarse", "values": list(range(0, 251, 25)), "i": 0, "wait": 8,
+                      "scores": {}, "started": time.time()}
         self.cam.set_focus(self.sweep["values"][0])
-        self.best_focus_btn.configure(text="Stop focus search")
 
     def _sweep_sharpness(self) -> float:
         """Sharpness of the card if it's found; otherwise of the middle of the
@@ -721,42 +816,90 @@ class App:
         h, w = self.frame.shape[:2]
         return sharpness(self.frame[h // 4: 3 * h // 4, w // 4: 3 * w // 4])
 
+    def _exposure_score(self) -> float:
+        """Detail (contrast) in the card, heavily penalised for washed-out areas."""
+        if self.found:
+            img = self.found[0]
+        else:
+            h, w = self.frame.shape[:2]
+            img = self.frame[h // 4: 3 * h // 4, w // 4: 3 * w // 4]
+        light = assess(img)
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        score = float(gray.std()) * max(0.0, 1 - 25 * light.washed_out)
+        return score * (0.5 if light.brightness < 60 else 1.0)
+
     def _sweep_step(self) -> None:
         sw = self.sweep
-        if time.time() - sw["started"] > 40:
-            self._end_sweep("Focus search took too long and stopped")
+        if time.time() - sw["started"] > 45:
+            self._end_sweep("Calibration took too long and stopped")
             return
-        if sw["wait"] > 0:  # give the lens time to move
+        if sw["wait"] > 0:  # give the lens / sensor time to settle
             sw["wait"] -= 1
             return
         v = sw["values"][sw["i"]]
-        sw["scores"][v] = max(sw["scores"].get(v, 0), self._sweep_sharpness())
-        done = sw["i"] + 1 + (len(sw["values"]) if sw["stage"] == "fine" else 0)
-        total = len(sw["values"]) + (9 if sw["stage"] == "coarse" else len(sw["values"]))
-        self.say(f"Finding best focus… trying {v}  ({done}/{total}, keep the card still)", AMBER)
+        score = self._exposure_score() if sw["kind"] == "exposure" else self._sweep_sharpness()
+        sw["scores"][v] = max(sw["scores"].get(v, 0), score)
+        what = "light (exposure)" if sw["kind"] == "exposure" else "focus"
+        self.say(f"Calibrating {what}… trying {v}  ({sw['i'] + 1}/{len(sw['values'])}, keep the card still)", AMBER)
         sw["i"] += 1
+        setter = self.cam.set_exposure if sw["kind"] == "exposure" else self.cam.set_focus
         if sw["i"] < len(sw["values"]):
-            self.cam.set_focus(sw["values"][sw["i"]])
+            setter(sw["values"][sw["i"]])
             sw["wait"] = 5
             return
         best = max(sw["scores"], key=sw["scores"].get)
+        if sw["kind"] == "exposure":
+            self.exposure_scale.set(best)
+            self._exposure_changed()
+            print(f"Best exposure: {best}\n")
+            self._start_focus_sweep()
+            return
         if sw["stage"] == "coarse":
             fine = [x for x in range(best - 20, best + 21, 5) if 0 <= x <= 250]
             sw.update(stage="fine", values=fine, i=0, wait=8)
             self.cam.set_focus(fine[0])
             return
-        self._end_sweep(f"Best focus: {best} (saved)", best)
+        self.sharp_base = sw["scores"][best]
+        self.settings["sharp_base"] = self.sharp_base
+        self.sharps = []
+        self._end_sweep(f"Calibrated: focus {best}" + ("" if self.auto_exposure.get()
+                                                         else f", exposure {int(self.exposure_scale.get())}")
+                        + " (saved)", best)
 
     def _end_sweep(self, message: str, best: int | None = None) -> None:
         self.sweep = None
-        self.best_focus_btn.configure(text="Find best focus")
+        self.best_focus_btn.configure(text="Calibrate camera")
         if best is not None:
             self.focus_scale.set(best)
         self._focus_slid(self.focus_scale.get())
         self._save_settings()
-        if self.mode == "sort":  # don't decide whatever was in view while the focus moved
+        if self.mode == "sort":  # don't decide whatever was in view while settings moved
             self.track, self.last_hash = None, None
         self.say(message, GREEN if best is not None else DIM)
+
+    def _keep_tuned(self) -> None:
+        """While running: nudge exposure if the light stays off, re-focus if
+        cards keep looking much blurrier than right after calibrating."""
+        if not self.keep_tuned.get() or self.sweep or not self.cam:
+            return
+        now = time.time()
+        if len(self.lights) >= 3 and now - self.last_tune > 1.5:
+            recent = self.lights[-3:]
+            step = -1 if all(v in ("bright", "glare") for v in recent) else 1 if all(v == "dark" for v in recent) else 0
+            if step and not self.auto_exposure.get() and hasattr(self.cam, "set_exposure"):
+                lo, hi = Camera.EXPOSURE_RANGE
+                v = int(round(self.exposure_scale.get()))
+                if lo <= v + step <= hi:
+                    self._nudge_exposure(step)
+                    print(f"Light {'too bright' if step < 0 else 'too dark'}: exposure → {v + step}\n")
+                    self.last_tune = now
+                    self.lights = []
+        pending = self.track is not None and self.track.get("state") == "pending" if self.mode == "sort" else False
+        if (self.sharp_base and len(self.sharps) >= 15 and not self.auto_focus.get() and not pending
+                and now - self.last_refocus > 60 and float(np.median(self.sharps)) < 0.4 * self.sharp_base):
+            self.last_refocus = now
+            print("Cards look much blurrier than after calibrating: re-focusing\n")
+            self.calibrate(focus_only=True)
 
     # --------------------------------------------------------------- sorting
     def _rule_fields_ok(self) -> bool:
@@ -829,6 +972,9 @@ class App:
         self.last_hash = track["hash"]
         if result is None:
             self.unknown += 1
+            self.unknown_streak += 1
+            if self.unknown_streak >= 3:
+                print("3 cards in a row not identified: check the light meter and try Calibrate camera\n")
             track["yes"] = None
             self.verdict.configure(text="?", bg=AMBER, fg="#0b0d12")
             self.verdict_name.configure(text="Couldn't identify this card: set it aside.\n"
@@ -840,6 +986,7 @@ class App:
             self.say("Not identified. Is the bottom line in focus and free of glare?"
                      + (f"  ({', '.join(steps)})" if steps else ""), AMBER)
             return
+        self.unknown_streak = 0
         if result.new:
             self.identifier.learn(result, img)
             self.refresh_count()

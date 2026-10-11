@@ -174,12 +174,25 @@ instantly from its picture (teach it a couple of times for reliability). Its
 into face up / face down, and **Game** separates a mixed box whichever way up
 the cards are. Card backs are left out of inventory exports.
 
-### Camera
+### Camera and light
 
-The sidebar has the picture size, focus (Auto, or a slider; the C920 moves in
-steps of 5), live frames per second and a sharpness reading for the card in
-view. **Find best focus** tries focus settings with a card under the camera
-and keeps the sharpest. If fps is low at 1920 × 1080, try 1280 × 720.
+The sidebar has the picture size, focus and exposure (each Auto, or manual
+with ◀ ▶ and a slider; the C920's focus moves in steps of 5), live frames per
+second, a sharpness reading, and a **light meter** for the card in view:
+"Light: good", "Too bright / too dark", or "Glare spot". Washed-out parts of
+the card are painted red on the video, so you can see a lamp reflection and
+move or soften the light (a sheet of paper as a diffuser works) until the
+meter says good.
+
+**Calibrate camera** tries exposure settings (keeping the most detail with
+nothing washed out), then focus settings, with a card under the camera, and
+saves the best. Click it again to stop.
+
+**Keep the camera tuned while running** (on by default): if the card stays
+too bright or too dark for a few seconds, exposure is nudged a step (when
+it's manual); if cards keep looking much blurrier than right after
+calibrating, focus is searched again (at most once a minute); three
+unidentified cards in a row prompt a check of light and focus.
 
 ### Mistakes it guards against
 
