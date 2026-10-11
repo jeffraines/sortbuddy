@@ -14,6 +14,17 @@ TOO_DARK = 70      # average grey of the card's inside below this: too dark
 BRIGHT = 205       # above this: bright, though not yet lost
 
 
+def _washed(gray: np.ndarray) -> np.ndarray:
+    """Pixels with no detail left. Webcams often clip below 255 (a C920
+    sending MJPG tops out around 235-245), so a pile-up of pixels at the
+    picture's own maximum counts too, not just pure white."""
+    top = int(gray.max())
+    level = WASHED_OUT
+    if top >= 215 and float((gray >= top - 1).mean()) > 0.005:
+        level = min(level, top - 1)
+    return gray >= level
+
+
 @dataclass
 class Light:
     verdict: str        # "good", "bright", "glare", "dark"
@@ -32,7 +43,7 @@ def assess(card: np.ndarray) -> Light:
     gray = cv2.cvtColor(card, cv2.COLOR_BGR2GRAY) if card.ndim == 3 else card
     h, w = gray.shape
     inside = gray[int(0.06 * h): int(0.94 * h), int(0.06 * w): int(0.94 * w)]  # skip the border
-    washed = gray >= WASHED_OUT
+    washed = _washed(gray)
     washed_frac = float(washed.mean())
     brightness = float(inside.mean())
 
@@ -58,4 +69,4 @@ def assess(card: np.ndarray) -> Light:
 def glare_mask(frame: np.ndarray) -> np.ndarray:
     """Where the picture is washed out (for painting it red on screen)."""
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
-    return gray >= WASHED_OUT
+    return _washed(gray)

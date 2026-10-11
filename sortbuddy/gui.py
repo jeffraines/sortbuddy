@@ -51,6 +51,8 @@ DEFAULTS = {"catalog": str(Path("mycards") / "catalog.csv"), "camera": 0, "focus
 KIND_COLORS = {"ok": GREEN, "warn": AMBER, "error": RED, "": DIM}
 SAME_CARD = 85  # picture difference (bits of 256) still counted as the same card being moved
 REMOVED_AFTER = 1.0  # seconds with no card in view before the next card counts as new
+PHOTO_SIZE = (630, 880)  # saved card photos (63 x 88 mm at 10 px/mm)
+PHOTO_QUALITY = 92  # JPEG quality: ~100-200 KB a card
 MOTION = 3.0  # average brightness change (0-255) between frames that counts as movement
 SETTLE = 0.5  # seconds still after movement before the card is looked at again
 
@@ -232,6 +234,8 @@ class App:
             side="left", padx=6)
         ttk.Label(row, text="(applies on start)", style="Dim.TLabel").pack(side="left")
 
+        self.rotation = int(self.settings.get("rotate", 0)) % 360
+        ttk.Button(row, text="⟳", width=2, style="Small.TButton", command=self._rotate_view).pack(side="left", padx=(6, 0))
         row = ttk.Frame(side)
         row.grid(sticky="ew", pady=(6, 0))
         ttk.Label(row, text="Focus").pack(side="left")
@@ -317,6 +321,10 @@ class App:
         tk.Checkbutton(side, text="Sound when a card is decided", variable=self.sound_var, bg=SIDE, fg=DIM,
                        selectcolor=PANEL, activebackground=SIDE, activeforeground=FG, highlightthickness=0,
                        bd=0, font=(FONT, 9)).grid(sticky="w", pady=(6, 0))
+        self.photos_var = tk.BooleanVar(value=bool(self.settings.get("photos", False)))
+        tk.Checkbutton(side, text="Save a photo of each card (for selling / condition)", variable=self.photos_var,
+                       bg=SIDE, fg=DIM, selectcolor=PANEL, activebackground=SIDE, activeforeground=FG,
+                       highlightthickness=0, bd=0, font=(FONT, 9)).grid(sticky="w", pady=(2, 0))
         ttk.Button(side, text="Export inventory…", command=self.export).grid(sticky="ew", pady=(8, 0))
 
         section("Activity")
@@ -503,7 +511,8 @@ class App:
                 "focus": self.focus_var.get().strip(), "rule": self.rule_var.get(),
                 "resolution": self.res_var.get(), "sound": self.sound_var.get(),
                 "exposure": "" if self.auto_exposure.get() else int(self.exposure_scale.get()),
-                "keep_tuned": self.keep_tuned.get(),
+                "keep_tuned": self.keep_tuned.get(), "rotate": getattr(self, "rotation", 0),
+                "photos": self.photos_var.get() if hasattr(self, "photos_var") else False,
                 "sharp_base": getattr(self, "sharp_base", None) or self.settings.get("sharp_base"),
                 "lookup": self.lookup_names.get(self.lookup_var.get(), ""), "version": 4}
         try:
@@ -734,6 +743,9 @@ class App:
             if self.found and color:
                 k = max(2, frame.shape[1] // 300)
                 cv2.polylines(frame, [self.found[1].astype(int)], True, color, k)
+            if self.rotation:
+                frame = cv2.rotate(frame, {90: cv2.ROTATE_90_CLOCKWISE, 180: cv2.ROTATE_180,
+                                           270: cv2.ROTATE_90_COUNTERCLOCKWISE}[self.rotation])
             w, h = self.view.winfo_width(), self.view.winfo_height()
             if w > 10 and h > 10:
                 self.photo = to_photo(frame, w, h)
@@ -745,6 +757,12 @@ class App:
                     self.say("Card found: press Space to capture" if self.found else
                              "Hold a card flat under the camera", GREEN if self.found else DIM)
         self.loop_id = self.root.after(15, self.loop)
+
+    def _rotate_view(self) -> None:
+        """Turn the picture on screen a quarter turn (only the view: the
+        camera can sit however the machine needs it)."""
+        self.rotation = (self.rotation + 90) % 360
+        self._save_settings()
 
     def _watch_motion(self, frame) -> None:
         """Note when anything moves (a hand, a card dropped in): a tiny blurred
@@ -1042,6 +1060,8 @@ class App:
             t["state"] = "pending"
             t["job"] = t.get("job", 0) + 1
             img = self.found[0].copy()
+            if self.photos_var.get():  # sharper copy, straight from the full camera picture
+                t["photo"] = warp_card(self.frame, self.found[1], PHOTO_SIZE)
             careful = self.problem == "rough"
 
             def work(track=t, img=img, job=t["job"], careful=careful):
@@ -1069,6 +1089,7 @@ class App:
         if result is None and track.get("recheck") and self.last_unknown is not None \
                 and hamming(track["hash"], self.last_unknown) <= SAME_CARD:
             return  # the same unknown card, looked at again after a nudge
+        self._save_photo(track, result)
         if result is None:
             self.last_unknown = track["hash"]
             self.unknown += 1
@@ -1114,6 +1135,29 @@ class App:
                  + ("  ·  added to your list" if result.new else ""), FG)
         if self.sound_var.get():
             self.root.bell()
+
+    def _save_photo(self, track, result) -> None:
+        """Keep a photo of the card (the photos folder next to the card list,
+        one folder per sorting session)."""
+        photo = track.pop("photo", None)
+        if photo is None or (result is not None and result.card_id == self.last_card_id):
+            return
+        folder = self.log_path.parent.parent / "photos" / self.log_path.stem
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            self.photo_count = getattr(self, "photo_count", 0) + 1
+            if result is None:
+                name = "unknown"
+            else:
+                label = str(result.fields.get("name") or "")
+                name = f"{result.card_id} {label}".strip()
+            name = "".join(ch if ch.isalnum() or ch in " -_." else "_" for ch in name)[:80]
+            path = folder / f"{self.photo_count:04d} {name}.jpg"
+            ok, data = cv2.imencode(".jpg", photo, [cv2.IMWRITE_JPEG_QUALITY, PHOTO_QUALITY])
+            if ok:
+                path.write_bytes(data.tobytes())  # (cv2.imwrite can't do non-English paths on Windows)
+        except OSError as e:
+            print(f"Couldn't save the photo: {e}\n")
 
     def _update_counts(self) -> None:
         y, n = self.session.counts()

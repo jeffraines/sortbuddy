@@ -15,7 +15,7 @@ CARD_W, CARD_H = 315, 440
 CARD_ASPECT = CARD_H / CARD_W  # ~1.397
 # A card never fills more than this share of the picture; anything bigger
 # (the floor of a box, a playmat) is the surroundings.
-MAX_CARD_FRAC = 0.5
+MAX_CARD_FRAC = 0.85  # bigger than this is the table or a box floor, not a card (a close camera can fill ~60% with the card)
 
 # Cards are cut out of the full-resolution frame at this size: enough detail
 # to read the small print. Fingerprinting shrinks them back down.
@@ -88,6 +88,27 @@ ART_GAP = 0.33     # see _lopsided
 BORDER_GAP = 0.06  # see _innermost_card
 
 
+CLEAN_ASPECT = 0.25  # how far from a card's shape a clean outline may be
+INNER_ASPECT = 0.06  # a card inside a box has a card's exact shape (seen from above)
+
+
+def _aspect(quad: np.ndarray) -> float:
+    o = order_corners(quad)
+    w = (np.linalg.norm(o[1] - o[0]) + np.linalg.norm(o[2] - o[3])) / 2
+    h = (np.linalg.norm(o[3] - o[0]) + np.linalg.norm(o[2] - o[1])) / 2
+    return float(max(w, h) / max(1e-6, min(w, h)))
+
+
+def _has_detail(edges: np.ndarray, quad: np.ndarray) -> bool:
+    """A card has print all over it; an empty box floor or tray is plain."""
+    o = order_corners(quad)
+    inner = (o - o.mean(axis=0)) * 0.8 + o.mean(axis=0)
+    mask = np.zeros(edges.shape, np.uint8)
+    cv2.fillPoly(mask, [inner.astype(np.int32)], 1)
+    n = int(mask.sum())
+    return n > 0 and float(edges[mask.astype(bool)].mean()) / 255 > 0.02
+
+
 def _gaps(outer: np.ndarray, inner: np.ndarray) -> list[float]:
     """Margins between two outlines (top, bottom, left, right) as a share of
     the outer's longer side."""
@@ -121,6 +142,9 @@ def _innermost_card(clean: list) -> tuple[float, np.ndarray]:
                     continue  # the card's own art box, not a card inside a box
                 if np.mean(_gaps(quad, q)) < BORDER_GAP:
                     continue  # a thin even margin: the card's own border and its printed frame
+                off = abs(_aspect(q) - CARD_ASPECT)
+                if off > INNER_ASPECT and off > abs(_aspect(quad) - CARD_ASPECT):
+                    continue  # the outer one is more card-shaped: the inner is something printed on it
                 area, quad, changed = a, q, True
                 break
     return area, quad
@@ -207,6 +231,97 @@ def _fit_aspect(gray: np.ndarray, quad: np.ndarray) -> np.ndarray:
     return order_corners(np.array(new, np.float32))
 
 
+LINE_ASPECT = 0.05  # how close to a card's shape four lines must be
+
+
+def _line_rect(blur: np.ndarray, min_area_frac: float) -> tuple[np.ndarray | None, float]:
+    """Find the card from straight lines, for when its outline is broken
+    (soft focus, a dark card underneath, glare). Card edges are long straight
+    lines in two perpendicular directions; any four of them that make a
+    rectangle with a card's exact shape, and are mostly drawn along their
+    whole length, are a card. Returns (corners or None, how much of the four
+    sides is visible, 0-1)."""
+    h, w = blur.shape
+    edges = cv2.Canny(blur, 20, 60)
+    segs = cv2.HoughLinesP(edges, 1, np.pi / 360, 40, minLineLength=int(0.1 * min(h, w)), maxLineGap=8)
+    if segs is None or len(segs) < 4:
+        return None, 0.0
+    segs = segs.reshape(-1, 4).astype(np.float32)
+    d = segs[:, 2:] - segs[:, :2]
+    length = np.hypot(d[:, 0], d[:, 1])
+    ang = np.degrees(np.arctan2(d[:, 1], d[:, 0])) % 180
+    # Main direction (mod 90), weighted by length.
+    hist = np.bincount((ang % 90).astype(int) // 2, weights=length, minlength=45)
+    hist = hist + np.roll(hist, 1) + np.roll(hist, -1)
+    peak = (np.argmax(hist) * 2 + 1)
+    near = np.abs(((ang % 90) - peak + 45) % 90 - 45) <= 4
+    if not near.any():
+        return None, 0.0
+    off = ((ang[near] % 90) - peak + 45) % 90 - 45
+    theta = np.radians(peak + float(np.average(off, weights=length[near])))
+    du = np.array([np.cos(theta), np.sin(theta)], np.float32)   # direction of family A
+    dv = np.array([-du[1], du[0]], np.float32)                  # direction of family B
+    a_fam = near & (np.abs(((ang - np.degrees(theta)) + 90) % 180 - 90) <= 4)
+    b_fam = near & ~a_fam
+    p0, p1 = segs[:, :2], segs[:, 2:]
+    u0, u1, v0, v1 = p0 @ du, p1 @ du, p0 @ dv, p1 @ dv
+    umin = float(min(u0.min(), u1.min())) - 2
+    vmin = float(min(v0.min(), v1.min())) - 2
+    size = int(np.hypot(h, w)) + 8
+
+    def clusters(fam, pos, lo, hi, base):
+        """Lines of one direction merged by position: (position, coverage along it)."""
+        out = []
+        for i in np.argsort(pos[fam]):
+            idx = np.flatnonzero(fam)[i]
+            p = float(pos[idx])
+            if not out or p - out[-1][0] > 4:
+                out.append([p, np.zeros(size, bool), 0.0])
+            c = out[-1]
+            a, b = sorted((int(lo[idx] - base), int(hi[idx] - base)))
+            c[1][max(0, a):max(0, b) + 1] = True
+            c[2] += float(length[idx])
+        out.sort(key=lambda c: -c[2])
+        return [(c[0], c[1]) for c in out[:20]]
+
+    A = clusters(a_fam, (v0 + v1) / 2, u0, u1, umin)   # constant v, run along u
+    B = clusters(b_fam, (u0 + u1) / 2, v0, v1, vmin)   # constant u, run along v
+    if len(A) < 2 or len(B) < 2:
+        return None, 0.0
+    best, best_key = None, (-1.0, -1.0)
+    for i in range(len(A)):
+        for j in range(len(A)):
+            va, vb = A[i][0], A[j][0]
+            if vb - va < 10:
+                continue
+            for k in range(len(B)):
+                for m in range(len(B)):
+                    ua, ub = B[k][0], B[m][0]
+                    if ub - ua < 10:
+                        continue
+                    lu, lv = ub - ua, vb - va
+                    aspect = max(lu, lv) / min(lu, lv)
+                    if abs(aspect - CARD_ASPECT) > LINE_ASPECT * CARD_ASPECT:
+                        continue
+                    if not min_area_frac * h * w <= lu * lv <= MAX_CARD_FRAC * h * w:
+                        continue
+                    su = slice(int(ua - umin), int(ub - umin))
+                    sv = slice(int(va - vmin), int(vb - vmin))
+                    sup = [A[i][1][su].mean(), A[j][1][su].mean(), B[k][1][sv].mean(), B[m][1][sv].mean()]
+                    if min(sup) < 0.35:
+                        continue
+                    # Among well-drawn rectangles take the biggest: the card,
+                    # not the frame printed on it.
+                    key = (float(np.mean(sup) >= 0.6), lu * lv)
+                    if key > best_key:
+                        best_key, best = key, (ua, ub, va, vb, float(np.mean(sup)))
+    if best is None:
+        return None, 0.0
+    ua, ub, va, vb, sup = best
+    corners = np.array([ua * du + va * dv, ub * du + va * dv, ub * du + vb * dv, ua * du + vb * dv], np.float32)
+    return order_corners(corners), sup
+
+
 def find_card_checked(frame: np.ndarray, min_area_frac: float = 0.05) -> tuple[np.ndarray | None, str]:
     """Locate the (top) card. Returns (corners or None, note), note being:
 
@@ -230,6 +345,11 @@ def find_card_checked(frame: np.ndarray, min_area_frac: float = 0.05) -> tuple[n
     contours, hierarchy = cv2.findContours(edges, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     if hierarchy is None:
         return None, ""
+    # Also the card as one dark shape on a light background (black-bordered
+    # cards in a white box): its printed lines can't break this one up.
+    _, dark = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    dark = cv2.morphologyEx(dark, cv2.MORPH_CLOSE, np.ones((15, 15), np.uint8))
+    contours = list(contours) + list(cv2.findContours(dark, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0])
 
     frame_area = gray.shape[0] * gray.shape[1]
     fh, fw = gray.shape
@@ -254,19 +374,24 @@ def find_card_checked(frame: np.ndarray, min_area_frac: float = 0.05) -> tuple[n
             rough = (area, quad)
         hull_area = cv2.contourArea(cv2.convexHull(c))
         solid = hull_area > 0 and area / hull_area > 0.975  # no dents (two overlapping cards: <= 0.97)
-        if abs(aspect - CARD_ASPECT) <= 0.25 and solid and _card_shaped(quad, area) and _straight(c, quad, area):
-            clean.append((area, quad))
+        if abs(aspect - CARD_ASPECT) <= CLEAN_ASPECT and solid and _card_shaped(quad, area) and _straight(c, quad, area):
+            if _has_detail(edges, quad):
+                clean.append((area, quad))
 
     # A clean outline must be a good part of the biggest shape: the top card of
     # a stack is, a card's art box (also a rectangle) isn't.
-    clean = [(a, q) for a, q in clean if a >= 0.45 * biggest_blob]
+    every = sorted(clean, key=lambda x: -x[0])
+    clean = [(a, q) for a, q in every if a >= 0.45 * biggest_blob]
     if clean:
-        clean.sort(key=lambda x: -x[0])
-        area, quad = _innermost_card(clean)
+        # (a card in a box can be well under half the box floor: look at every outline inside)
+        area, quad = _innermost_card(clean[:1] + every)
         centre = quad.mean(axis=0)
         apart = [q for a, q in clean[1:] if 0.6 < a / area and
                  np.linalg.norm(q.mean(axis=0) - centre) > 0.5 * np.sqrt(area)]
         return order_corners(_fit_aspect(blur, quad)), ("several" if apart else "")
+    quad, support = _line_rect(blur, min_area_frac)
+    if quad is not None and _has_detail(edges, quad):
+        return quad, ("" if support >= 0.6 else "rough")
     if rough is not None:
         return order_corners(rough[1]), "rough"
     return None, ""
