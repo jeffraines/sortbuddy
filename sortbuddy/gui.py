@@ -35,7 +35,7 @@ from .rules import Rule, RuleError
 from .gui_rules import RuleBuilder
 from .session import Session
 from .theme import ACCENT, AMBER, BG, DIM, FAINT, FG, FONT, GREEN, LINE, PANEL, RED, SIDE
-from .vision import extract_card_checked
+from .vision import Stabilizer, extract_card_checked, warp_card
 
 SETTINGS = Path.home() / ".sortbuddy-gui.json"
 # Fields card lookups and OCR fill in, so rules can be checked before any card is known.
@@ -273,10 +273,11 @@ class App:
         row.grid(sticky="ew", pady=(6, 0))
         self.best_focus_btn = ttk.Button(row, text="Calibrate camera", command=self.calibrate, width=17)
         self.best_focus_btn.pack(side="left")
-        self.cam_info = ttk.Label(row, text="", style="Dim.TLabel", wraplength=150, justify="left")
+        self.cam_info = tk.Label(row, text="", bg=SIDE, fg=DIM, font=(FONT, 9), wraplength=170, justify="left",
+                                 anchor="w", height=2)  # fixed height: changing text mustn't move things below
         self.cam_info.pack(side="left", padx=8)
-        self.light_label = tk.Label(side, text="", bg=SIDE, fg=DIM, font=(FONT, 10), anchor="w", justify="left",
-                                    wraplength=310)
+        self.light_label = tk.Label(side, text="", bg=SIDE, fg=DIM, font=(FONT, 10), anchor="nw", justify="left",
+                                    wraplength=320, height=2)  # always two lines tall, so nothing below jumps
         self.light_label.grid(sticky="ew", pady=(4, 0))
         self.gauge = tk.Canvas(side, width=330, height=30, bg=SIDE, highlightthickness=0)
         self.gauge.grid(sticky="w", pady=(2, 0))
@@ -658,6 +659,7 @@ class App:
         self.frame_times: list[float] = []
         self.sharp = None
         self.sweep = None
+        self.stabilizer = Stabilizer()
         self._exposure_changed()
         self.lights: list[str] = []          # recent light verdicts
         self.sharps: list[float] = []        # recent sharpness of cards in view
@@ -710,7 +712,9 @@ class App:
         ok, frame = self.cam.read()
         if ok:
             self.frame = frame
-            self.found, self.problem = extract_card_checked(frame)
+            found, note = extract_card_checked(frame)
+            corners, self.problem = self.stabilizer.update(found[1] if found else None, note)
+            self.found = (warp_card(frame, corners), corners) if corners is not None else None
             self._camera_stats()
             if self.sweep:
                 self._sweep_step()
@@ -1005,11 +1009,12 @@ class App:
         if t is None:
             t = self.track = {"hash": h, "stable": 1, "state": "new", "yes": None, "different": 0}
         elif hamming(h, t["hash"]) <= SAME_CARD:
-            t.update(stable=t["stable"] + 1, hash=h, different=0)
+            t.update(stable=t["stable"] + 1, hash=h, different=max(0, t["different"] - 1))
         elif self.problem == "":
-            # Looks different with a clean outline: a new card, if it stays that way.
-            t["different"] += 1
-            if t["different"] >= 5:
+            # Looks different with a clean outline: a new card, if it mostly
+            # stays that way (an odd mismatched frame doesn't reset the count).
+            t["different"] += 2
+            if t["different"] >= 8:
                 t = self.track = {"hash": h, "stable": 5, "state": "new", "yes": None, "different": 0}
         if t["state"] == "new" and t["stable"] >= 3:
             t["state"] = "pending"

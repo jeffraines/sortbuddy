@@ -79,6 +79,127 @@ def _straight(contour: np.ndarray, quad: np.ndarray, area: float) -> bool:
     return float(np.percentile(dev, 90)) <= 0.008 * np.sqrt(area)
 
 
+def _inside(inner: np.ndarray, outer: np.ndarray) -> bool:
+    poly = order_corners(outer).reshape(-1, 1, 2)
+    return all(cv2.pointPolygonTest(poly, (float(x), float(y)), True) > -3 for x, y in inner)
+
+
+ART_GAP = 0.33  # see _lopsided
+
+
+def _lopsided(outer: np.ndarray, inner: np.ndarray) -> bool:
+    """True if `inner` leaves a big gap on one side of `outer`, as a share of
+    the outer's longer side. A card's own art box leaves the whole text box
+    below it (or the name and type line beside it, when sideways); a card
+    lying in a box leaves only a small margin all round."""
+    o, i = order_corners(outer), order_corners(inner)
+    long_side = max(float(np.linalg.norm(o[3] - o[0])), float(np.linalg.norm(o[1] - o[0]))) or 1.0
+    gaps = [np.linalg.norm((i[0] + i[1] - o[0] - o[1]) / 2),  # top
+            np.linalg.norm((o[3] + o[2] - i[3] - i[2]) / 2),  # bottom
+            np.linalg.norm((i[0] + i[3] - o[0] - o[3]) / 2),  # left
+            np.linalg.norm((o[1] + o[2] - i[1] - i[2]) / 2)]  # right
+    return max(gaps) / long_side > ART_GAP
+
+
+def _innermost_card(clean: list) -> tuple[float, np.ndarray]:
+    """From card-shaped outlines (largest first), skip containers: if a clean
+    outline holds another one that's clearly smaller (< 80% of its area), the
+    outer one is a box opening, tray or sleeve and the inner one is the card.
+    A card's own printed frame is ~85-95% of the card, so it doesn't count."""
+    area, quad = clean[0]
+    changed = True
+    while changed:
+        changed = False
+        for a, q in clean:
+            if 0.2 * area < a < 0.8 * area and _inside(q, quad):
+                if _lopsided(quad, q):
+                    continue  # the card's own art box, not a card inside a box
+                area, quad, changed = a, q, True
+                break
+    return area, quad
+
+
+def _profile(gray: np.ndarray, a: np.ndarray, b: np.ndarray, inward: np.ndarray, depth: float) -> np.ndarray:
+    """Brightness going in from the edge a-b: averaged along the edge, one
+    value per pixel of depth. A card's border reads the same on every side."""
+    h, w = gray.shape
+    t = np.linspace(0.2, 0.8, 30)[:, None]
+    line = a + (b - a) * t
+    steps = np.arange(int(depth))[:, None, None]
+    pts = line[None] + steps * inward
+    x = np.clip(pts[..., 0].round().astype(int), 0, w - 1)
+    y = np.clip(pts[..., 1].round().astype(int), 0, h - 1)
+    return np.median(gray[y, x].astype(np.float32), axis=1)
+
+
+ASPECT_SLACK = 0.03  # outlines this close to a card's shape are left alone
+
+
+def _fit_aspect(gray: np.ndarray, quad: np.ndarray) -> np.ndarray:
+    """Trim an outline that's too long for a card back to card shape.
+
+    When a card underneath sticks out past one end of the top card and both
+    have dark borders, the two merge into one outline a few percent too long.
+    Every card is 88 x 63 mm, so the overhang shows as a wrong shape. The cut
+    goes where the end looks like the card's own sides (same border, same
+    width), trying both ends; if nothing matches clearly it's left alone.
+    """
+    tl, tr, br, bl = order_corners(quad).astype(np.float32)
+    w = (np.linalg.norm(tr - tl) + np.linalg.norm(br - bl)) / 2
+    h = (np.linalg.norm(bl - tl) + np.linalg.norm(br - tr)) / 2
+    if min(w, h) < 40:
+        return quad
+    sides = [np.linalg.norm(tr - tl), np.linalg.norm(br - bl), np.linalg.norm(bl - tl), np.linalg.norm(br - tr)]
+    if max(sides[0], sides[1]) > 1.025 * min(sides[0], sides[1]) or \
+            max(sides[2], sides[3]) > 1.025 * min(sides[2], sides[3]):
+        return quad  # seen at a slant: the shape is off from perspective, not an overhang
+    ratio = max(w, h) / min(w, h)
+    if ratio > CARD_ASPECT * (1 + ASPECT_SLACK):
+        trim_long = True                                   # too long
+    elif ratio < CARD_ASPECT * (1 - ASPECT_SLACK):
+        trim_long = False                                  # too wide
+    else:
+        return quad
+    along_w = (w >= h) == trim_long                        # trimming the tl->tr direction?
+    rails = [(tl, tr), (bl, br)] if along_w else [(tl, bl), (tr, br)]
+    length = float(np.linalg.norm(rails[0][1] - rails[0][0]) + np.linalg.norm(rails[1][1] - rails[1][0])) / 2
+    other = float(min(w, h) if trim_long else max(w, h))
+    keep = (other * CARD_ASPECT if trim_long else other / CARD_ASPECT) / length
+    axis = (rails[0][1] - rails[0][0] + rails[1][1] - rails[1][0]) / 2
+    axis /= np.linalg.norm(axis) or 1.0
+    side = np.array([-axis[1], axis[0]], np.float32)       # across the rails
+    if np.dot(side, rails[1][0] - rails[0][0]) < 0:
+        side = -side
+    depth = max(6.0, 0.07 * min(w, h))
+
+    def cut(f: float):
+        return tuple(s + (e - s) * f for s, e in rails)
+
+    # What the card's edge looks like, from its two sides (rails).
+    (s0, e0), (s1, e1) = rails
+    mid = lambda s, e: (s + (e - s) * 0.25, s + (e - s) * 0.75)
+    ref = (_profile(gray, *mid(s0, e0), side, depth) + _profile(gray, *mid(s1, e1), -side, depth)) / 2
+
+    def misfit(pos: float, inward: np.ndarray) -> float:
+        return float(np.mean(np.abs(_profile(gray, *cut(pos), inward, depth) - ref)))
+
+    as_is = min(misfit(0.0, axis), misfit(1.0, -axis))      # the better of the two current ends
+    best = (np.inf, None)
+    step = 1.0 / length
+    for from_start in (False, True):                       # cut off the end, or the start
+        for f in np.arange(keep - 0.015, min(keep + 0.015, 1 - 2 * step), step):
+            pos = 1 - f if from_start else f
+            m = misfit(pos, axis if from_start else -axis)
+            if m < best[0]:
+                best = (m, (from_start, pos))
+    if best[1] is None or best[0] > max(12.0, 1.5 * as_is):
+        return quad  # no end that looks like the card's sides: leave it
+    from_start, pos = best[1]
+    a, b = cut(pos)
+    new = [a, e0, e1, b] if from_start else [s0, a, b, s1]
+    return order_corners(np.array(new, np.float32))
+
+
 def find_card_checked(frame: np.ndarray, min_area_frac: float = 0.05) -> tuple[np.ndarray | None, str]:
     """Locate the (top) card. Returns (corners or None, note), note being:
 
@@ -134,11 +255,11 @@ def find_card_checked(frame: np.ndarray, min_area_frac: float = 0.05) -> tuple[n
     clean = [(a, q) for a, q in clean if a >= 0.45 * biggest_blob]
     if clean:
         clean.sort(key=lambda x: -x[0])
-        area, quad = clean[0]
+        area, quad = _innermost_card(clean)
         centre = quad.mean(axis=0)
         apart = [q for a, q in clean[1:] if 0.6 < a / area and
                  np.linalg.norm(q.mean(axis=0) - centre) > 0.5 * np.sqrt(area)]
-        return order_corners(quad), ("several" if apart else "")
+        return order_corners(_fit_aspect(blur, quad)), ("several" if apart else "")
     if rough is not None:
         return order_corners(rough[1]), "rough"
     return None, ""
@@ -183,3 +304,48 @@ def extract_card(frame: np.ndarray, detect_width: int = 960) -> tuple[np.ndarray
     Only clean outlines; use extract_card_checked to also get rough ones."""
     found, note = extract_card_checked(frame, detect_width)
     return found if note != "rough" else None
+
+
+class Stabilizer:
+    """Low-pass filter for the card outline over time, like the eye does.
+
+    Small frame-to-frame jitter is averaged out; a different outline must
+    show up in several frames in a row before it replaces the current one;
+    a few frames with no card don't drop it. Feed it every frame."""
+
+    def __init__(self, hold: int = 3, switch_after: int = 3, smoothing: float = 0.5):
+        self.corners: np.ndarray | None = None
+        self.note = ""
+        self.hold, self.switch_after, self.smoothing = hold, switch_after, smoothing
+        self.missing = 0
+        self.candidate: np.ndarray | None = None
+        self.candidate_count = 0
+
+    @staticmethod
+    def _shift(a: np.ndarray, b: np.ndarray) -> float:
+        """Largest corner movement, relative to the card's size."""
+        size = np.linalg.norm(a[2] - a[0])
+        return float(np.max(np.linalg.norm(a - b, axis=1)) / max(size, 1.0))
+
+    def update(self, corners: np.ndarray | None, note: str) -> tuple[np.ndarray | None, str]:
+        if corners is None:
+            self.missing += 1
+            if self.missing > self.hold:
+                self.corners, self.candidate, self.candidate_count = None, None, 0
+            return self.corners, self.note
+        self.missing = 0
+        if self.corners is None:
+            self.corners, self.note = corners.astype(np.float32), note
+        elif self._shift(self.corners, corners) < 0.06:  # same outline, a little jitter: average
+            self.corners = (self.smoothing * self.corners + (1 - self.smoothing) * corners).astype(np.float32)
+            self.note = note
+            self.candidate, self.candidate_count = None, 0
+        else:  # a different outline: only switch once it has held for a few frames
+            if self.candidate is not None and self._shift(self.candidate, corners) < 0.06:
+                self.candidate_count += 1
+            else:
+                self.candidate, self.candidate_count = corners.astype(np.float32), 1
+            if self.candidate_count >= self.switch_after:
+                self.corners, self.note = self.candidate, note
+                self.candidate, self.candidate_count = None, 0
+        return self.corners, self.note
