@@ -49,6 +49,17 @@ grouped by domain with cost in order within each group.
 
 ## Try it with your own cards (Windows + USB webcam)
 
+**Easiest:** install Python from python.org, then double-click
+`SortBuddy.bat`. The first time, it sets itself up (a few minutes); after
+that it opens the SortBuddy window directly, no terminal needed. Right-click
+it → *Send to → Desktop (create shortcut)* to keep it handy.
+
+In the window: pick or create a card list, set the camera number
+(*Find cameras* lists them), click **Add cards…**, then type a sort rule
+and click **Start sorting**.
+
+The same things from a terminal:
+
 Any standard USB webcam (e.g. a Logitech C270/C920) works.
 
 ```powershell

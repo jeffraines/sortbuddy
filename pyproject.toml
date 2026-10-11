@@ -16,5 +16,8 @@ dev = ["pytest>=7", "rapidocr_onnxruntime>=1.2"]
 [project.scripts]
 sortbuddy = "sortbuddy.cli:main"
 
+[project.gui-scripts]
+sortbuddy-gui = "sortbuddy.gui:main"
+
 [tool.setuptools]
 packages = ["sortbuddy"]

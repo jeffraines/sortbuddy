@@ -32,6 +32,11 @@ from .rules import Rule, RuleError
 from .session import Debouncer, Session, export_inventory
 from .vision import extract_card
 
+# Hooks so the window app (gui.py) can drive the same camera loops:
+# `ask` prompts for a line of text, `tick` runs once per camera frame.
+ask = input
+tick = None
+
 MAX_DISTANCE = 60  # out of 256 bits
 MIN_MARGIN = 8
 
@@ -186,6 +191,8 @@ def _confirm(catalog: Catalog, card_img, text, auto_id: str):
                 cv2.putText(panel, line, (16, 50 + 44 * r), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
         cv2.imshow("SortBuddy enroll", np.hstack([img, panel]))
         key = cv2.waitKey(30) & 0xFF
+        if tick:
+            tick()
         if key == 13:
             break
         if key == 27:
@@ -194,8 +201,8 @@ def _confirm(catalog: Catalog, card_img, text, auto_id: str):
             i = (i + 1) % len(names)
         if key == ord("e"):
             print("(Leave blank to keep what's in brackets.)")
-            card_id = input(f"Card id [{card_id}]: ").strip() or card_id
-            name = input(f"Name [{name}]: ").strip() or name
+            card_id = (ask(f"Card id [{card_id}]: ") or "").strip() or card_id
+            name = (ask(f"Name [{name}]: ") or "").strip() or name
             break
     fields = {"name": name}
     if text and text.set_code:
@@ -235,6 +242,8 @@ def cmd_enroll(args):
                     (80, 220, 80) if found else (60, 60, 230),
                     f"{cam.focus_label}   [ ] focus   A auto   Q done")
             key = show("SortBuddy enroll", frame)
+            if tick:
+                tick()
             if key == ord("q"):
                 break
             if cam.handle_key(key):
@@ -246,22 +255,26 @@ def cmd_enroll(args):
             if not found:
                 print("No card found in that frame; adjust the card or lighting and try again.")
                 continue
-            if want:
-                save_reference(catalog, path, want.id, found[0])
-                todo.pop(0)
-                print(f"Saved {want.id}")
-                added += 1
-                continue
-            card_img, text = found[0], None
-            if use_ocr:
-                text = ocr.read_card(card_img)
-                card_img = text.upright
-            result = _confirm(catalog, card_img, text, _next_auto_id(catalog))
-            if result:
-                card_id, fields = result
-                save_reference(catalog, path, card_id, card_img, **fields)
-                print(f"Saved {card_id}: {fields.get('name', '')}")
-                added += 1
+            try:
+                if want:
+                    save_reference(catalog, path, want.id, found[0])
+                    todo.pop(0)
+                    print(f"Saved {want.id}")
+                    added += 1
+                    continue
+                card_img, text = found[0], None
+                if use_ocr:
+                    text = ocr.read_card(card_img)
+                    card_img = text.upright
+                result = _confirm(catalog, card_img, text, _next_auto_id(catalog))
+                if result:
+                    card_id, fields = result
+                    save_reference(catalog, path, card_id, card_img, **fields)
+                    print(f"Saved {card_id}: {fields.get('name', '')}")
+                    added += 1
+            except PermissionError:
+                # Excel locks a CSV while it's open.
+                print(f"Couldn't save: {path} is open in another program (Excel?). Close it and capture again.")
     finally:
         cam.release()
         cv2.destroyAllWindows()
@@ -347,6 +360,8 @@ def cmd_scan(args):
                 overlay(frame, corners, banner, color, f"{status}   |   {cam.focus_label}")
                 try:
                     key = show("SortBuddy", frame)
+                    if tick:
+                        tick()
                 except cv2.error:
                     print("No GUI available (headless OpenCV?); continuing without a window.")
                     gui = False
