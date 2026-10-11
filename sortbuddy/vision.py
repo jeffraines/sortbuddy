@@ -85,11 +85,11 @@ def find_card_checked(frame: np.ndarray, min_area_frac: float = 0.05) -> tuple[n
             continue
         aspect = max(w, h) / min(w, h)
         hull_area = cv2.contourArea(cv2.convexHull(c))
-        solid = hull_area > 0 and area / hull_area > 0.92  # no big dents, like two cards' corner
+        solid = hull_area > 0 and area / hull_area > 0.975  # no dents (two overlapping cards: <= 0.97)
         if abs(aspect - CARD_ASPECT) <= 0.25 and solid and _card_shaped(quad, area):
             cards.append((area, quad))
-        elif area > 0.08 * frame_area:
-            odd_blobs += 1  # something big that isn't one clean card, e.g. two overlapping
+        elif area > 0.08 * frame_area and 0 < area / max(1.0, cv2.contourArea(cv2.convexHull(c))) < 0.98:
+            odd_blobs += 1  # a big shape with a dent where two cards overlap
     if len(cards) > 1 or (odd_blobs and not cards):
         return None, "several"
     if not cards:

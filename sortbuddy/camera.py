@@ -30,10 +30,15 @@ class Camera:
         if not self.ok:
             self.cap.release()
             return
-        # MJPG is needed for 1080p at a usable frame rate over USB 2.
-        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        # Compressed MJPG is needed for HD at a usable frame rate over USB 2;
+        # uncompressed, a C920 gives only 5 fps at 1080p. Some Windows drivers
+        # only take the format if it's set again after the size, so set both.
+        mjpg = cv2.VideoWriter_fourcc(*"MJPG")
+        self.cap.set(cv2.CAP_PROP_FOURCC, mjpg)
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+        self.cap.set(cv2.CAP_PROP_FOURCC, mjpg)
+        self.cap.set(cv2.CAP_PROP_FPS, 30)
         self.focus: int | None = None
         if focus is not None:
             self.set_focus(focus)
@@ -43,6 +48,13 @@ class Camera:
 
     def release(self) -> None:
         self.cap.release()
+
+    @property
+    def codec(self) -> str:
+        """The format the camera is actually sending, e.g. MJPG or YUY2."""
+        code = int(self.cap.get(cv2.CAP_PROP_FOURCC))
+        text = "".join(chr((code >> 8 * i) & 0xFF) for i in range(4)).strip("\x00 ")
+        return text if text.isprintable() and text else "?"
 
     @property
     def size(self) -> str:

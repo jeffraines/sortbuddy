@@ -21,7 +21,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import ocr
+from . import lookup, ocr
 from .catalog import Catalog
 from .fingerprint import FingerprintIndex
 from .proposal import propose
@@ -36,6 +36,9 @@ class Result:
     new: bool = False      # wasn't in the list before
     extra: dict = field(default_factory=dict)
 
+
+# Fields the bottom line answers by itself (Riftbound sets are known by code).
+QUICK_FIELDS = {"game", "face", "set", "number", "language", "foil", "id"}
 
 # Picture matches this close (bits out of 256) are trusted without reading
 # the bottom line; looser ones up to max_distance are checked.
@@ -62,13 +65,19 @@ class Identifier:
             return None, False
         return m.card_id, m.distance <= SURE_DISTANCE and m.margin >= SURE_MARGIN
 
-    def identify(self, card: np.ndarray, check_foil: bool = False) -> Result | None:
+    def identify(self, card: np.ndarray, check_foil: bool = False, needs: set | None = None) -> Result | None:
         """Safe to call from a worker thread (doesn't touch the catalog file).
 
         Foil is per copy, not per card: with `check_foil`, a card recognised
         from its picture still gets its bottom line read for the foil mark.
+
+        `needs` is the set of fields the sort rule uses. If the bottom line
+        alone answers them (game, set, number, language, foil, face), the
+        card isn't looked up or read further: much faster, but it isn't
+        added to your list either.
         """
         start = time.time()
+        steps: list[str] = []
         known, sure = self.known(card)
         if known and self.catalog[known].get("face") == "back":
             return Result(known, dict(self.catalog[known].fields), "known", time.time() - start)
@@ -91,14 +100,31 @@ class Identifier:
         if not self.use_ocr or self.source is None:
             return None
 
+        t = time.time()
         quick = quick or ocr.read_collector(card)
+        steps.append(f"bottom line {time.time() - t:.1f}s")
+        if needs is not None and needs <= QUICK_FIELDS and quick.set_code:
+            fields = {"face": "front", "set": quick.set_code,
+                      "game": "riftbound" if quick.set_code.upper() in lookup.RIFTBOUND_SETS else "magic"}
+            if quick.number is not None:
+                fields["number"] = quick.number
+            fields.update({k: v for k, v in quick.extra.items() if k in ("language",)})
+            if quick.foil is not None:
+                fields["foil"] = "yes" if quick.foil else "no"
+            card_id = f"{quick.set_code}-{quick.number:03d}" if quick.number is not None else quick.set_code
+            fields["name"] = card_id
+            return Result(card_id, fields, "quick", time.time() - start, False, {"steps": steps})
         if quick.set_code and quick.number is not None:
+            t = time.time()
             prop = propose(quick, "", "", self.source, {})
+            steps.append(f"lookup {time.time() - t:.1f}s")
             if prop.found:
                 return Result(prop.card_id, prop.fields, "bottom line", time.time() - start, True,
-                              {"image": quick.upright})
+                              {"image": quick.upright, "steps": steps})
 
-        full = ocr.read_card(card)
+        t = time.time()
+        full = ocr.read_card(card, local_names=False)
+        steps.append(f"whole card {time.time() - t:.1f}s")
         if quick.set_code and not full.set_code:
             full.set_code = quick.set_code
         cache: dict = {}
@@ -108,7 +134,8 @@ class Identifier:
             # name. A wrong card is worse than a "?".
             if prop.found and (prop.kind == "ok" or _similar(name, prop.fields.get("name", "")) >= 0.85):
                 return Result(prop.card_id, prop.fields, "name", time.time() - start, True,
-                              {"image": full.upright})
+                              {"image": full.upright, "steps": steps})
+        self.last_steps = steps
         return None
 
 

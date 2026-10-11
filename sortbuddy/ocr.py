@@ -330,7 +330,7 @@ def read_collector(card: np.ndarray) -> CardText:
     return CardText([], set_code, number, _details(lines, h, w), _foil(lines, h, w), lines, img)
 
 
-def read_card(card: np.ndarray) -> CardText:
+def read_card(card: np.ndarray, local_names: bool = True) -> CardText:
     """OCR a flattened card. Tries both ways up and keeps whichever reads better."""
     best, best_score, best_img = None, -1.0, card
     for img in (card, cv2.rotate(card, cv2.ROTATE_180)):
@@ -342,15 +342,15 @@ def read_card(card: np.ndarray) -> CardText:
     set_code, number = _collector(best, h, w)
     details = _details(best, h, w)
     names = _name_candidates(best, h)
-    local_names = []
+    printed_names = []
     language = details.get("language", "EN")
     if language != "EN":
         # The default model reads English (and Chinese); on e.g. a Korean card
         # its name guesses are junk. Read the card again with that language's
         # model for the printed name; the lookup supplies the English one.
         names = [n for n in names if n.isascii()]
-        engine = _language_engine(language)
+        engine = _language_engine(language) if local_names else None
         if engine is not None:
             script = LANGUAGE_MODELS[language]["script"]
-            local_names = [n for n in _name_candidates(_read(best_img, engine), h) if script.search(n)]
-    return CardText(names, set_code, number, details, _foil(best, h, w), best, best_img, local_names)
+            printed_names = [n for n in _name_candidates(_read(best_img, engine), h) if script.search(n)]
+    return CardText(names, set_code, number, details, _foil(best, h, w), best, best_img, printed_names)

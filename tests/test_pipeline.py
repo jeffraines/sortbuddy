@@ -403,3 +403,21 @@ def test_card_back_is_recognised_without_reading(demo, tmp_path):
     assert r.card_id == "BACK-magic" and r.how == "known"
     assert r.fields["face"] == "back" and r.fields["game"] == "magic"
     assert Rule("face == back and game == magic")(Card(r.card_id, r.fields))
+
+
+def test_quick_path_when_rule_only_needs_the_bottom_line(demo, tmp_path):
+    from sortbuddy import ocr
+    from sortbuddy.identify import Identifier
+
+    if not ocr.available():
+        pytest.skip("rapidocr_onnxruntime not installed")
+    _, catalog, _ = demo
+
+    def no_lookup(*a):
+        raise AssertionError("a game-only rule shouldn't need a lookup")
+
+    ident = Identifier(Catalog([], tmp_path), tmp_path / "l.csv",
+                       FingerprintIndex([], np.zeros((0, 32), np.uint8)), no_lookup)
+    img = cv2.imread(str(catalog.image_path(catalog["DEMO-004"])))
+    r = ident.identify(extract_card(fake_photo(img, random.Random(2)))[0], needs={"game"})
+    assert r.how == "quick" and r.fields["set"] == "DEMO" and r.fields["game"] == "magic" and not r.new

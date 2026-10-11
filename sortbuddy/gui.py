@@ -43,9 +43,9 @@ KNOWN_FIELDS = {"id", "name", "set", "set_name", "number", "rarity", "cost", "ma
                 "artist", "year", "price", "price_foil", "foil", "language", "domain", "supertype", "energy",
                 "might", "tags", "variant", "name_kr", "game", "face"}
 NO_LOOKUP = "Off (fill in details yourself)"
-RESOLUTIONS = ["1920 × 1080", "1280 × 720", "640 × 480"]
+RESOLUTIONS = ["1280 × 720", "1920 × 1080", "640 × 480"]
 DEFAULTS = {"catalog": str(Path("mycards") / "catalog.csv"), "camera": 0, "focus": "",
-            "rule": "cost <= 3", "lookup": "auto", "version": 2}
+            "rule": "cost <= 3", "lookup": "auto", "version": 3}
 
 KIND_COLORS = {"ok": GREEN, "warn": AMBER, "error": RED, "": DIM}
 SAME_CARD = 85  # picture difference (bits of 256) still counted as the same card being moved
@@ -160,6 +160,7 @@ class App:
         s.configure("Heading.TLabel", background=PANEL, font=(FONT, 16, "bold"))
         s.configure("TButton", background=PANEL, foreground=FG, padding=(12, 7), borderwidth=1, focusthickness=0)
         s.map("TButton", background=[("active", LINE), ("disabled", SIDE)], foreground=[("disabled", FAINT)])
+        s.configure("Small.TButton", padding=(2, 2))
         for name, color in (("Accent", ACCENT), ("Go", GREEN), ("Stop", RED)):
             s.configure(f"{name}.TButton", background=color, foreground="#0b0d12", font=(FONT, 11, "bold"),
                         padding=(14, 10), borderwidth=0)
@@ -222,8 +223,12 @@ class App:
         tk.Checkbutton(row, text="Auto", variable=self.auto_focus, command=self._auto_toggled, bg=SIDE, fg=FG,
                        selectcolor=PANEL, activebackground=SIDE, activeforeground=FG, highlightthickness=0,
                        bd=0, font=(FONT, 10)).pack(side="left", padx=(6, 4))
-        self.focus_scale = ttk.Scale(row, from_=0, to=250, command=self._focus_slid, length=130)
-        self.focus_scale.pack(side="left")
+        ttk.Button(row, text="◀", width=2, style="Small.TButton", command=lambda: self._nudge_focus(-5)).pack(
+            side="left")
+        self.focus_scale = ttk.Scale(row, from_=0, to=250, command=self._focus_slid, length=100)
+        self.focus_scale.pack(side="left", padx=2)
+        ttk.Button(row, text="▶", width=2, style="Small.TButton", command=lambda: self._nudge_focus(5)).pack(
+            side="left")
         self.focus_label = ttk.Label(row, text="", width=4, style="Dim.TLabel")
         self.focus_label.pack(side="left", padx=4)
         try:
@@ -233,7 +238,7 @@ class App:
         self._show_focus()
         row = ttk.Frame(side)
         row.grid(sticky="ew", pady=(6, 0))
-        self.best_focus_btn = ttk.Button(row, text="Find best focus", command=self.find_best_focus)
+        self.best_focus_btn = ttk.Button(row, text="Find best focus", command=self.find_best_focus, width=17)
         self.best_focus_btn.pack(side="left")
         self.cam_info = ttk.Label(row, text="", style="Dim.TLabel")
         self.cam_info.pack(side="left", padx=8)
@@ -434,13 +439,15 @@ class App:
             return dict(DEFAULTS)
         if saved.get("version", 1) < 2:
             saved["lookup"] = "auto"  # older versions saved "off" without anyone choosing it
-        return {**DEFAULTS, **saved, "version": 2}
+        if saved.get("version", 1) < 3:
+            saved.pop("resolution", None)  # 1280 x 720 is the new default: much faster on most webcams
+        return {**DEFAULTS, **saved, "version": 3}
 
     def _save_settings(self) -> None:
         data = {"catalog": self.catalog_var.get(), "camera": self._camera_index(),
                 "focus": self.focus_var.get().strip(), "rule": self.rule_var.get(),
                 "resolution": self.res_var.get(), "sound": self.sound_var.get(),
-                "lookup": self.lookup_names.get(self.lookup_var.get(), ""), "version": 2}
+                "lookup": self.lookup_names.get(self.lookup_var.get(), ""), "version": 3}
         try:
             SETTINGS.write_text(json.dumps(data, indent=2), encoding="utf-8")
         except OSError:
@@ -624,12 +631,13 @@ class App:
             return
         ok, frame = self.cam.read()
         if ok:
+            self.frame = frame
             self.found, self.problem = extract_card_checked(frame)
             self._camera_stats()
             if self.sweep:
                 self._sweep_step()
             color = (255, 140, 79) if self.found else None  # BGR of ACCENT
-            if self.mode == "sort":
+            if self.mode == "sort" and not self.sweep:
                 color = self._sort_step()
             if self.found and color:
                 k = max(2, frame.shape[1] // 300)
@@ -651,6 +659,12 @@ class App:
         auto = self.auto_focus.get()
         self.focus_label.configure(text="auto" if auto else str(int(self.focus_scale.get())))
         self.focus_scale.state(["disabled"] if auto else ["!disabled"])
+
+    def _nudge_focus(self, step: int) -> None:
+        if self.auto_focus.get():
+            self.auto_focus.set(False)
+        self.focus_scale.set(min(250, max(0, round(self.focus_scale.get() / 5) * 5 + step)))
+        self._focus_slid(self.focus_scale.get())
 
     def _focus_slid(self, value) -> None:
         if self.auto_focus.get():
@@ -679,34 +693,51 @@ class App:
                 self.sharp = sharpness(self.found[0])
             fps = (len(self.frame_times) - 1) / max(1e-6, self.frame_times[-1] - self.frame_times[0])
             sharp = f"  ·  sharpness {self.sharp:.0f}" if self.found and self.sharp is not None else ""
-            self.cam_info.configure(text=f"{fps:.0f} fps{sharp}")
+            codec = getattr(self.cam, "codec", "")
+            slow = "  (slow: try 1280 × 720)" if fps < 12 and len(self.frame_times) > 10 else ""
+            self.cam_info.configure(text=f"{fps:.0f} fps {codec}{sharp}{slow}")
 
     def find_best_focus(self) -> None:
-        """Try focus settings with a card in view and keep the sharpest."""
+        """Step through focus settings and keep the one where the picture is
+        sharpest. Click again to stop."""
+        if self.sweep:
+            self._end_sweep("Focus search stopped")
+            return
         if not self.cam:
             messagebox.showinfo("SortBuddy", "Start the camera first (Add cards or Sort), with a card under it.")
             return
         self.auto_focus.set(False)
         self._show_focus()
-        self.sweep = {"stage": "coarse", "values": list(range(0, 251, 25)), "i": 0, "wait": 8, "scores": {}}
+        self.sweep = {"stage": "coarse", "values": list(range(0, 251, 25)), "i": 0, "wait": 8, "scores": {},
+                      "started": time.time()}
         self.cam.set_focus(self.sweep["values"][0])
-        self.best_focus_btn.state(["disabled"])
+        self.best_focus_btn.configure(text="Stop focus search")
+
+    def _sweep_sharpness(self) -> float:
+        """Sharpness of the card if it's found; otherwise of the middle of the
+        picture (at bad focus settings the card's outline can't be found)."""
+        if self.found:
+            return sharpness(self.found[0])
+        h, w = self.frame.shape[:2]
+        return sharpness(self.frame[h // 4: 3 * h // 4, w // 4: 3 * w // 4])
 
     def _sweep_step(self) -> None:
         sw = self.sweep
-        if not self.found:
-            self.say("Finding best focus: put a card under the camera", AMBER)
+        if time.time() - sw["started"] > 40:
+            self._end_sweep("Focus search took too long and stopped")
             return
         if sw["wait"] > 0:  # give the lens time to move
             sw["wait"] -= 1
             return
         v = sw["values"][sw["i"]]
-        sw["scores"][v] = max(sw["scores"].get(v, 0), sharpness(self.found[0]))
-        self.say(f"Finding best focus… trying {v}", AMBER)
+        sw["scores"][v] = max(sw["scores"].get(v, 0), self._sweep_sharpness())
+        done = sw["i"] + 1 + (len(sw["values"]) if sw["stage"] == "fine" else 0)
+        total = len(sw["values"]) + (9 if sw["stage"] == "coarse" else len(sw["values"]))
+        self.say(f"Finding best focus… trying {v}  ({done}/{total}, keep the card still)", AMBER)
         sw["i"] += 1
         if sw["i"] < len(sw["values"]):
             self.cam.set_focus(sw["values"][sw["i"]])
-            sw["wait"] = 6
+            sw["wait"] = 5
             return
         best = max(sw["scores"], key=sw["scores"].get)
         if sw["stage"] == "coarse":
@@ -714,12 +745,18 @@ class App:
             sw.update(stage="fine", values=fine, i=0, wait=8)
             self.cam.set_focus(fine[0])
             return
+        self._end_sweep(f"Best focus: {best} (saved)", best)
+
+    def _end_sweep(self, message: str, best: int | None = None) -> None:
         self.sweep = None
-        self.best_focus_btn.state(["!disabled"])
-        self.focus_scale.set(best)
-        self._focus_slid(best)
+        self.best_focus_btn.configure(text="Find best focus")
+        if best is not None:
+            self.focus_scale.set(best)
+        self._focus_slid(self.focus_scale.get())
         self._save_settings()
-        self.say(f"Best focus: {best} (saved)", GREEN)
+        if self.mode == "sort":  # don't decide whatever was in view while the focus moved
+            self.track, self.last_hash = None, None
+        self.say(message, GREEN if best is not None else DIM)
 
     # --------------------------------------------------------------- sorting
     def _rule_fields_ok(self) -> bool:
@@ -771,7 +808,7 @@ class App:
 
             def work(track=t, img=img, job=t["job"]):
                 try:
-                    result = self.identifier.identify(img, self.check_foil)
+                    result = self.identifier.identify(img, self.check_foil, set(self.rule.fields))
                 except Exception as e:  # noqa: BLE001 - e.g. offline: report, don't crash
                     print(f"Couldn't identify: {e}\n")
                     result = None
@@ -799,12 +836,16 @@ class App:
             self.recent.insert(0, "?      Unknown card")
             self.recent.itemconfigure(0, fg=AMBER)
             self._update_counts()
-            self.say("Not identified. Is the bottom line in focus and free of glare?", AMBER)
+            steps = getattr(self.identifier, "last_steps", [])
+            self.say("Not identified. Is the bottom line in focus and free of glare?"
+                     + (f"  ({', '.join(steps)})" if steps else ""), AMBER)
             return
         if result.new:
             self.identifier.learn(result, img)
             self.refresh_count()
             self.rule_label.configure(text=f"{self.rule_description}   ·   {len(self.catalog)} card{'s' * (len(self.catalog) != 1)} in your list")
+        if result.how == "quick" and result.card_id in self.catalog.cards:
+            result.fields["name"] = self.catalog[result.card_id].name  # a nicer name if we know it
         card = Card(result.card_id, result.fields)
         yes = bool(self.rule(card))
         track["yes"] = yes
@@ -812,9 +853,11 @@ class App:
         self.session.save_log(self.log_path)
         self._show_verdict(card.name, yes)
         how = {"known": "recognised from its picture", "bottom line": "read from the bottom line",
-               "name": "found by name"}[result.how]
-        self.say(f"{card.name}  ·  {how}  ·  {result.seconds:.1f}s" + ("  ·  added to your list" if result.new else ""),
-                 FG)
+               "name": "found by name", "quick": "set code read (enough for this rule)"}[result.how]
+        steps = result.extra.get("steps")
+        detail = f"  ({', '.join(steps)})" if steps and result.seconds > 1 else ""
+        self.say(f"{card.name}  ·  {how}  ·  {result.seconds:.1f}s{detail}"
+                 + ("  ·  added to your list" if result.new else ""), FG)
         if self.sound_var.get():
             self.root.bell()
 
@@ -1018,9 +1061,7 @@ class App:
             self.next_name()
             return "break"
         if key in ("bracketleft", "bracketright"):
-            current = float(self.focus_var.get() or self.focus_scale.get())
-            self.focus_scale.set(current + (5 if key == "bracketright" else -5))
-            self._focus_slid(self.focus_scale.get())
+            self._nudge_focus(5 if key == "bracketright" else -5)
             return "break"
         if key == "a":
             self.auto_focus.set(not self.auto_focus.get())
