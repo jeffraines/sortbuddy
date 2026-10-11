@@ -237,12 +237,15 @@ def cmd_scan(args):
             if not ok:
                 break
             found = extract_card(frame)
-            corners, seen = None, None
+            corners, seen, status = None, None, "no card"
             if found:
                 warped, corners = found
                 m = index.match(warped)
                 if m and m.confident(MAX_DISTANCE, MIN_MARGIN):
                     seen = m.card_id
+                    status = f"{catalog[m.card_id].name}  d={m.distance} gap={m.margin}"
+                elif m:
+                    status = f"unsure (best {m.card_id} d={m.distance} gap={m.margin})"
             decided = debounce.update(seen)
             if decided:
                 card: Card = catalog[decided]
@@ -257,6 +260,8 @@ def cmd_scan(args):
                     print("\a", end="", flush=True)
             if gui:
                 _overlay(frame, corners, banner, color)
+                cv2.putText(frame, status, (10, frame.shape[0] - 12), cv2.FONT_HERSHEY_SIMPLEX,
+                            0.55, (255, 255, 255), 1)
                 try:
                     cv2.imshow("SortBuddy", frame)
                     key = cv2.waitKey(1) & 0xFF
