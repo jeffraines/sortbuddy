@@ -84,28 +84,33 @@ def _inside(inner: np.ndarray, outer: np.ndarray) -> bool:
     return all(cv2.pointPolygonTest(poly, (float(x), float(y)), True) > -3 for x, y in inner)
 
 
-ART_GAP = 0.33  # see _lopsided
+ART_GAP = 0.33     # see _lopsided
+BORDER_GAP = 0.06  # see _innermost_card
+
+
+def _gaps(outer: np.ndarray, inner: np.ndarray) -> list[float]:
+    """Margins between two outlines (top, bottom, left, right) as a share of
+    the outer's longer side."""
+    o, i = order_corners(outer), order_corners(inner)
+    long_side = max(float(np.linalg.norm(o[3] - o[0])), float(np.linalg.norm(o[1] - o[0]))) or 1.0
+    return [float(np.linalg.norm(g)) / long_side for g in (
+        (i[0] + i[1] - o[0] - o[1]) / 2, (o[3] + o[2] - i[3] - i[2]) / 2,
+        (i[0] + i[3] - o[0] - o[3]) / 2, (o[1] + o[2] - i[1] - i[2]) / 2)]
 
 
 def _lopsided(outer: np.ndarray, inner: np.ndarray) -> bool:
-    """True if `inner` leaves a big gap on one side of `outer`, as a share of
-    the outer's longer side. A card's own art box leaves the whole text box
-    below it (or the name and type line beside it, when sideways); a card
-    lying in a box leaves only a small margin all round."""
-    o, i = order_corners(outer), order_corners(inner)
-    long_side = max(float(np.linalg.norm(o[3] - o[0])), float(np.linalg.norm(o[1] - o[0]))) or 1.0
-    gaps = [np.linalg.norm((i[0] + i[1] - o[0] - o[1]) / 2),  # top
-            np.linalg.norm((o[3] + o[2] - i[3] - i[2]) / 2),  # bottom
-            np.linalg.norm((i[0] + i[3] - o[0] - o[3]) / 2),  # left
-            np.linalg.norm((o[1] + o[2] - i[1] - i[2]) / 2)]  # right
-    return max(gaps) / long_side > ART_GAP
+    """True if `inner` leaves a big gap on one side of `outer`. A card's own
+    art box leaves the whole text box below it (or the name and type line
+    beside it, when sideways); a card lying in a box only a small margin."""
+    return max(_gaps(outer, inner)) > ART_GAP
 
 
 def _innermost_card(clean: list) -> tuple[float, np.ndarray]:
     """From card-shaped outlines (largest first), skip containers: if a clean
     outline holds another one that's clearly smaller (< 80% of its area), the
     outer one is a box opening, tray or sleeve and the inner one is the card.
-    A card's own printed frame is ~85-95% of the card, so it doesn't count."""
+    A card's own printed frame (a thin even margin inside it) and its art box
+    (a lopsided one) don't count."""
     area, quad = clean[0]
     changed = True
     while changed:
@@ -114,6 +119,8 @@ def _innermost_card(clean: list) -> tuple[float, np.ndarray]:
             if 0.2 * area < a < 0.8 * area and _inside(q, quad):
                 if _lopsided(quad, q):
                     continue  # the card's own art box, not a card inside a box
+                if np.mean(_gaps(quad, q)) < BORDER_GAP:
+                    continue  # a thin even margin: the card's own border and its printed frame
                 area, quad, changed = a, q, True
                 break
     return area, quad

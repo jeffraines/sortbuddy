@@ -51,6 +51,8 @@ DEFAULTS = {"catalog": str(Path("mycards") / "catalog.csv"), "camera": 0, "focus
 KIND_COLORS = {"ok": GREEN, "warn": AMBER, "error": RED, "": DIM}
 SAME_CARD = 85  # picture difference (bits of 256) still counted as the same card being moved
 REMOVED_AFTER = 1.0  # seconds with no card in view before the next card counts as new
+MOTION = 3.0  # average brightness change (0-255) between frames that counts as movement
+SETTLE = 0.5  # seconds still after movement before the card is looked at again
 
 # What the details panel shows, roughly in the order the parts appear on a
 # card. Rows without a value for the current card are hidden, so Magic and
@@ -128,6 +130,8 @@ class App:
         self.frame = None
         self.sweep = None
         self.track = None
+        self.still_thumb = None
+        self.moved_at = 0.0  # last time anything moved in the picture (a hand, a new card)
         self.starting = None
         self.frame_times: list[float] = []
         self.pending = None  # captured card waiting to be saved
@@ -604,6 +608,7 @@ class App:
             self.track = None
             self.gone_since = None
             self.last_card_id, self.last_yes = None, None
+            self.last_unknown = None
             self.unknown = 0
             self.log_path = path.parent / "sessions" / f"{time.strftime('%Y%m%d-%H%M%S')}.csv"
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -712,6 +717,7 @@ class App:
         ok, frame = self.cam.read()
         if ok:
             self.frame = frame
+            self._watch_motion(frame)
             found, note = extract_card_checked(frame)
             corners, self.problem = self.stabilizer.update(found[1] if found else None, note)
             self.found = (warp_card(frame, corners), corners) if corners is not None else None
@@ -739,6 +745,15 @@ class App:
                     self.say("Card found: press Space to capture" if self.found else
                              "Hold a card flat under the camera", GREEN if self.found else DIM)
         self.loop_id = self.root.after(15, self.loop)
+
+    def _watch_motion(self, frame) -> None:
+        """Note when anything moves (a hand, a card dropped in): a tiny blurred
+        copy of the picture, compared with the last one."""
+        small = cv2.GaussianBlur(cv2.cvtColor(cv2.resize(frame, (96, 54), interpolation=cv2.INTER_AREA),
+                                              cv2.COLOR_BGR2GRAY), (5, 5), 0).astype(np.int16)
+        if self.still_thumb is not None and np.abs(small - self.still_thumb).mean() > MOTION:
+            self.moved_at = time.time()
+        self.still_thumb = small
 
     # ---------------------------------------------------------------- camera
     def _show_focus(self) -> None:
@@ -1000,6 +1015,7 @@ class App:
             if self.track and now - self.gone_since >= REMOVED_AFTER:
                 self.track = None          # card taken away
                 self.last_card_id = None   # the same card again is another copy
+                self.last_unknown = None
             if not self.track:
                 self.say("Show a card", DIM)
             return None
@@ -1016,7 +1032,13 @@ class App:
             t["different"] += 2
             if t["different"] >= 8:
                 t = self.track = {"hash": h, "stable": 5, "state": "new", "yes": None, "different": 0}
-        if t["state"] == "new" and t["stable"] >= 3:
+        still = now - self.moved_at >= SETTLE
+        if t["state"] == "done" and self.moved_at > t.get("decided_at", now) and still:
+            # Something moved since this card was decided and has settled:
+            # maybe a new card on top. Look again; the same card isn't counted twice.
+            t = self.track = {"hash": h, "stable": 3, "state": "new", "yes": None, "different": 0,
+                              "recheck": True}
+        if t["state"] == "new" and t["stable"] >= 3 and still:
             t["state"] = "pending"
             t["job"] = t.get("job", 0) + 1
             img = self.found[0].copy()
@@ -1043,7 +1065,12 @@ class App:
         if self.mode != "sort" or track.get("job") != job or track["state"] != "pending":
             return  # stale: the card was re-decided (e.g. a card back was just taught)
         track["state"] = "done"
+        track["decided_at"] = time.time()
+        if result is None and track.get("recheck") and self.last_unknown is not None \
+                and hamming(track["hash"], self.last_unknown) <= SAME_CARD:
+            return  # the same unknown card, looked at again after a nudge
         if result is None:
+            self.last_unknown = track["hash"]
             self.unknown += 1
             self.unknown_streak += 1
             if self.unknown_streak >= 3:
@@ -1060,6 +1087,7 @@ class App:
                      + (f"  ({', '.join(steps)})" if steps else ""), AMBER)
             return
         self.unknown_streak = 0
+        self.last_unknown = None
         if result.new:
             self.identifier.learn(result, img)
             self.refresh_count()
