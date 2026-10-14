@@ -464,3 +464,14 @@ def test_lighting_verdicts(demo):
     glare = card.copy()
     cv2.circle(glare, (300, 300), 110, (255, 255, 255), -1)   # one white blob, like a lamp reflection
     assert assess(glare.astype(np.uint8)).verdict == "glare"
+
+
+def test_photo_tier():
+    from sortbuddy.photos import photo_tier
+    assert photo_tier(None, 1.0) == "full"                       # unknown card: keep it all
+    assert photo_tier({"price": 0.1}, 1.0) == "small"
+    assert photo_tier({"price": 0.1, "price_foil": 3.0}, 1.0) == "full"
+    assert photo_tier({"price": 5}, 1.0) == "full"
+    assert photo_tier({"rarity": "Common"}, 1.0) == "small"      # no price: go by rarity
+    assert photo_tier({"rarity": "epic"}, 1.0) == "full"
+    assert photo_tier({}, 1.0) == "full"

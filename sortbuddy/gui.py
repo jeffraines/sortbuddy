@@ -30,6 +30,7 @@ from .catalog import Card, Catalog
 from .fingerprint import FingerprintIndex, hamming, phash, sharpness
 from .identify import Identifier
 from .lighting import assess, glare_mask
+from .photos import SMALL_QUALITY, SMALL_SIZE, photo_tier
 from .proposal import propose
 from .rules import Rule, RuleError
 from .gui_rules import RuleBuilder
@@ -325,6 +326,12 @@ class App:
         tk.Checkbutton(side, text="Save a photo of each card (for selling / condition)", variable=self.photos_var,
                        bg=SIDE, fg=DIM, selectcolor=PANEL, activebackground=SIDE, activeforeground=FG,
                        highlightthickness=0, bd=0, font=(FONT, 9)).grid(sticky="w", pady=(2, 0))
+        row = ttk.Frame(side)
+        row.grid(sticky="w", pady=(2, 0))
+        ttk.Label(row, text="    Full-size photo from $", style="Dim.TLabel").pack(side="left")
+        self.photo_min_var = tk.StringVar(value=str(self.settings.get("photo_min", "1")))
+        ttk.Entry(row, textvariable=self.photo_min_var, width=5).pack(side="left")
+        ttk.Label(row, text="  (cheaper: small photo)", style="Dim.TLabel").pack(side="left")
         ttk.Button(side, text="Export inventory…", command=self.export).grid(sticky="ew", pady=(8, 0))
 
         section("Activity")
@@ -513,6 +520,7 @@ class App:
                 "exposure": "" if self.auto_exposure.get() else int(self.exposure_scale.get()),
                 "keep_tuned": self.keep_tuned.get(), "rotate": getattr(self, "rotation", 0),
                 "photos": self.photos_var.get() if hasattr(self, "photos_var") else False,
+                "photo_min": self.photo_min_var.get().strip() if hasattr(self, "photo_min_var") else "1",
                 "sharp_base": getattr(self, "sharp_base", None) or self.settings.get("sharp_base"),
                 "lookup": self.lookup_names.get(self.lookup_var.get(), ""), "version": 4}
         try:
@@ -1064,9 +1072,13 @@ class App:
                 t["photo"] = warp_card(self.frame, self.found[1], PHOTO_SIZE)
             careful = self.problem == "rough"
 
-            def work(track=t, img=img, job=t["job"], careful=careful):
+            needs = set(self.rule.fields)
+            if self.photos_var.get():
+                needs |= {"price", "rarity"}  # to pick the photo size, the card's value is needed
+
+            def work(track=t, img=img, job=t["job"], careful=careful, needs=needs):
                 try:
-                    result = self.identifier.identify(img, self.check_foil, set(self.rule.fields), careful)
+                    result = self.identifier.identify(img, self.check_foil, needs, careful)
                 except Exception as e:  # noqa: BLE001 - e.g. offline: report, don't crash
                     print(f"Couldn't identify: {e}\n")
                     result = None
@@ -1152,8 +1164,18 @@ class App:
                 label = str(result.fields.get("name") or "")
                 name = f"{result.card_id} {label}".strip()
             name = "".join(ch if ch.isalnum() or ch in " -_." else "_" for ch in name)[:80]
+            try:
+                threshold = float(self.photo_min_var.get().strip().lstrip("$") or 0)
+            except ValueError:
+                threshold = 1.0
+            tier = photo_tier(result.fields if result is not None else None, threshold)
+            if tier == "small":
+                photo = cv2.resize(photo, SMALL_SIZE, interpolation=cv2.INTER_AREA)
+                folder = folder / "small"
+                folder.mkdir(exist_ok=True)
             path = folder / f"{self.photo_count:04d} {name}.jpg"
-            ok, data = cv2.imencode(".jpg", photo, [cv2.IMWRITE_JPEG_QUALITY, PHOTO_QUALITY])
+            quality = SMALL_QUALITY if tier == "small" else PHOTO_QUALITY
+            ok, data = cv2.imencode(".jpg", photo, [cv2.IMWRITE_JPEG_QUALITY, quality])
             if ok:
                 path.write_bytes(data.tobytes())  # (cv2.imwrite can't do non-English paths on Windows)
         except OSError as e:
