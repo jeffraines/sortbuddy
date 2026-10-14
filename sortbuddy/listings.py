@@ -63,7 +63,8 @@ def _safe(name: str) -> str:
     return "".join(ch if ch.isalnum() or ch in " -_.()" else "_" for ch in name).strip()[:80]
 
 
-def listing_text(card_id: str, fields: dict, qty: int, usd: float | None, rate: float) -> str:
+def listing_text(card_id: str, fields: dict, qty: int, usd: float | None, rate: float,
+                 top: float | None = None) -> str:
     game = str(fields.get("game") or "").lower()
     lang = str(fields.get("language") or "").lower()
     name = str(fields.get("name") or card_id)
@@ -82,6 +83,8 @@ def listing_text(card_id: str, fields: dict, qty: int, usd: float | None, rate: 
                      if usd is not None else "희망가: (시세 확인 필요)")
     price_line_en = f"Asking: about ${usd:.2f} (US market)" if usd is not None else "Asking: (check price)"
     qty_ko = f"수량: {qty}장" if qty > 1 else "수량: 1장"
+    variant_note = ([f"(참고: 같은 번호의 패럴렐/특별 일러스트는 최고 ${top:,.2f}. 이 카드가 그 버전이면 가격 재확인!)", ""]
+                    if usd is not None and top and top > usd * 3 else [])
     return "\n".join([
         "=== 한국어 ===",
         title_ko,
@@ -92,6 +95,7 @@ def listing_text(card_id: str, fields: dict, qty: int, usd: float | None, rate: 
         "사진 속 실물 카드 그대로 발송합니다.",
         "택배 / 직거래 가능",
         "",
+        *variant_note,
         "=== English ===",
         title_en,
         "",
@@ -105,7 +109,7 @@ def listing_text(card_id: str, fields: dict, qty: int, usd: float | None, rate: 
 
 
 def export_listings(catalog: Catalog, photo_dirs: list[str | Path], out: str | Path,
-                    min_usd: float = 1.0, krw_per_usd: float = 1400.0) -> int:
+                    min_usd: float = 1.0, krw_per_usd: float = 1400.0, price_db=None) -> int:
     """Write one listing folder per card worth at least `min_usd` (or with
     no known price, so it gets checked by hand). Returns the number of listings."""
     photos: dict[str, list[Path]] = defaultdict(list)
@@ -138,11 +142,20 @@ def export_listings(catalog: Catalog, photo_dirs: list[str | Path], out: str | P
         if usd is None:
             usd = max((v for v in (_num(fields.get("price")), _num(fields.get("price_foil"))) if v is not None),
                       default=None)
+        top = None
+        if price_db is not None:
+            from . import pricedb
+            key = pricedb.card_key(fields)
+            found = pricedb.price_for(price_db, *key) if key else None
+            if found:
+                top = found.top
+                if usd is None:
+                    usd = found.base
         if usd is not None and usd < min_usd:
             continue
         if usd is None and card_id not in full and min_usd > 0:
             continue  # no price, and judged bulk (e.g. a common) when photographed
-        rows.append((usd if usd is not None else math.inf, card_id, fields, files))
+        rows.append((usd if usd is not None else math.inf, card_id, fields, files, top))
 
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
@@ -151,7 +164,7 @@ def export_listings(catalog: Catalog, photo_dirs: list[str | Path], out: str | P
         w = csv.writer(f)
         w.writerow(["#", "id", "name", "name_ko", "set", "number", "rarity", "language", "quantity",
                     "price_usd", "asking_krw", "folder"])
-        for i, (usd, card_id, fields, files) in enumerate(rows, 1):
+        for i, (usd, card_id, fields, files, top) in enumerate(rows, 1):
             usd = None if usd == math.inf else usd
             qty = max(1, copies.get(card_id, 0))
             folder = out / _safe(f"{i:03d} {card_id} {fields.get('name', '')}")
@@ -159,7 +172,7 @@ def export_listings(catalog: Catalog, photo_dirs: list[str | Path], out: str | P
             for n, src in enumerate(files, 1):
                 if src.exists():
                     shutil.copy2(src, folder / f"{n:02d}{src.suffix}")
-            (folder / "listing.txt").write_text(listing_text(card_id, fields, qty, usd, krw_per_usd),
+            (folder / "listing.txt").write_text(listing_text(card_id, fields, qty, usd, krw_per_usd, top),
                                                 encoding="utf-8")
             w.writerow([i, card_id, fields.get("name", ""), fields.get("name_ko", ""), fields.get("set", ""),
                         fields.get("number", ""), fields.get("rarity", ""), fields.get("language", ""), qty,

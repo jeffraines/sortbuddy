@@ -500,3 +500,43 @@ def test_listings(tmp_path):
     assert "[원피스 카드게임] 샹크스 OP09-004 SR 한글판" in text and "18,000원" in text
     assert sorted(p.name for p in folder.glob("*.jpg")) == ["01.jpg", "02.jpg"]
     assert krw(0.5, 1400) == 1000 and krw(3, 1400) == 4500
+
+
+def test_pricedb(tmp_path):
+    from sortbuddy import pricedb
+    pages = {
+        "68/groups": [{"groupId": 1, "abbreviation": "OP09", "name": "Emperors"}],
+        "68/1/products": [
+            {"productId": 10, "name": "Shanks", "extendedData": [{"name": "Number", "value": "OP09-004"},
+                                                                 {"name": "Rarity", "value": "SR"}]},
+            {"productId": 11, "name": "Shanks (Parallel)", "extendedData": [{"name": "Number", "value": "OP09-004"}]},
+            {"productId": 12, "name": "Nami (Reprint)", "extendedData": [{"name": "Number", "value": "OP01-016"}]},
+            {"productId": 13, "name": "Booster Box", "extendedData": []}],
+    }
+    def fake(url, price=1.0):
+        key = url.split("tcgplayer/")[1]
+        if key.endswith("/prices"):
+            return [{"productId": 10, "marketPrice": price, "subTypeName": "Normal"},
+                    {"productId": 11, "marketPrice": 40.0, "subTypeName": "Normal"},
+                    {"productId": 12, "marketPrice": 0.5, "subTypeName": "Normal"},
+                    {"productId": 13, "marketPrice": 90.0, "subTypeName": "Normal"}]
+        return pages[key]
+    pricedb.PAUSE = 0
+    db = pricedb.connect(tmp_path / "p.db")
+    from datetime import date, timedelta
+    start = date(2026, 6, 1)
+    for i in range(110):   # flat at $1 for months, then jumps to $2 in the last week
+        d = (start + timedelta(days=i)).isoformat()
+        p = 1.0 if i < 103 else 2.0
+        pricedb.update(db, ["onepiece"], day=d, progress=lambda *_: None, fetch=lambda u, p=p: fake(u, p))
+    last = (start + timedelta(days=109)).isoformat()
+    pr = pricedb.price_for(db, "onepiece", "OP09", 4)
+    assert (pr.base, pr.top, pr.product_id) == (2.0, 40.0, 10)
+    assert pricedb.price_for(db, "onepiece", "OP01", 16).base == 0.5        # reprint found by its own number
+    assert pricedb.price_for(db, "onepiece", "OP09", 99) is None
+    tr = pricedb.trend(pricedb.history(db, 10), last)
+    assert tr.comeback and abs(tr.change_7d - 1.0) < 1e-9
+    assert not pricedb.trend(pricedb.history(db, 12), last).comeback
+    top = pricedb.movers(db, "onepiece", max_price=5)
+    assert top[0]["product_id"] == 10 and top[0]["comeback"]
+    assert pricedb.card_number("001/298") == 1 and pricedb.card_number("OP09-004") == 4

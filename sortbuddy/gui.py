@@ -338,6 +338,7 @@ class App:
         ttk.Button(row, text="Export inventory…", command=self.export).pack(side="left", fill="x", expand=True)
         ttk.Button(row, text="Make sale listings…", command=self.make_listings).pack(side="left", fill="x",
                                                                                        expand=True, padx=(6, 0))
+        ttk.Button(side, text="Update prices (US market)", command=self.update_prices).grid(sticky="ew", pady=(6, 0))
 
         section("Activity")
         self.log = tk.Text(side, height=8, width=36, bg=PANEL, fg=DIM, relief="flat", wrap="word",
@@ -1449,6 +1450,21 @@ class App:
             except SystemExit as e:
                 messagebox.showerror("SortBuddy", str(e.code))
 
+    def update_prices(self) -> None:
+        """Today's US prices into the local price history (a minute or two a game)."""
+        from . import pricedb
+        games = self.settings.get("price_games", ["onepiece", "riftbound", "pokemon"])
+
+        def work():
+            try:
+                db = pricedb.connect(pricedb.DEFAULT_DB)
+                n = pricedb.update(db, games, progress=lambda m: print(m))
+                print(f"Prices updated ({n} new). Risers: run 'sortbuddy prices movers'.\n")
+            except Exception as e:  # noqa: BLE001 - offline etc.: report, don't crash
+                print(f"Couldn't update prices: {e}\n")
+        print("Updating prices in the background…")
+        self.background(work)
+
     def make_listings(self) -> None:
         """Sale listings (photos + Korean/English text) for the valuable cards
         photographed in one sorting session."""
@@ -1471,7 +1487,9 @@ class App:
         try:
             path = Path(self.catalog_var.get())
             catalog = Catalog.load(path) if path.is_file() else getattr(self, "catalog", Catalog([]))
-            n = export_listings(catalog, [folder], out, min_usd, rate)
+            from . import pricedb
+            db = pricedb.connect(pricedb.DEFAULT_DB) if pricedb.DEFAULT_DB.exists() else None
+            n = export_listings(catalog, [folder], out, min_usd, rate, db)
         except (OSError, ValueError) as e:
             messagebox.showerror("SortBuddy", f"Couldn't write the listings: {e}")
             return

@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import re
 import sys
 import time
@@ -411,8 +412,48 @@ def cmd_export(args):
 def cmd_listings(args):
     from .listings import export_listings
     catalog = Catalog.load(args.catalog)
-    n = export_listings(catalog, args.photos, args.out, args.min_usd, args.krw_per_usd)
+    from . import pricedb
+    db = pricedb.connect(pricedb.DEFAULT_DB) if pricedb.DEFAULT_DB.exists() else None
+    n = export_listings(catalog, args.photos, args.out, args.min_usd, args.krw_per_usd, db)
     print(f"Wrote {n} listings to {args.out}")
+
+
+def _owned(catalog, logs):
+    from collections import Counter
+    counts = Counter()
+    for p in logs:
+        with open(p, newline="", encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                if not row["id"].startswith("BACK-"):
+                    counts[row["id"]] += 1
+    return [(cid, dict(catalog[cid].fields) if catalog.get(cid) else {}, n) for cid, n in counts.items()]
+
+
+def _pct(v):
+    return "" if v is None else f"{v:+.0%}"
+
+
+def cmd_prices(args):
+    from . import pricedb
+    db = pricedb.connect(args.db)
+    if args.action == "update":
+        n = pricedb.update(db, args.games)
+        print(f"Stored {n} prices.")
+    elif args.action == "movers":
+        for game in args.games:
+            print(f"\n== {game}: biggest risers" + (f" under ${args.max_price}" if args.max_price else "") + " ==")
+            for r in pricedb.movers(db, game, max_price=args.max_price, limit=args.limit):
+                flag = "  COMEBACK" if r["comeback"] else ""
+                print(f"{r['number']:<12} {r['name'][:40]:<40} ${r['price']:>8.2f}  7d {_pct(r['change_7d']):>6}"
+                      f"  30d {_pct(r['change_30d']):>6}{flag}")
+    elif args.action == "report":
+        catalog = Catalog.load(args.catalog)
+        rows = pricedb.owned_report(db, _owned(catalog, args.logs))
+        with open(args.out, "w", newline="", encoding="utf-8-sig") as f:
+            w = csv.DictWriter(f, fieldnames=list(rows[0]) if rows else ["id"])
+            w.writeheader()
+            w.writerows(rows)
+        print(f"Wrote {len(rows)} cards to {args.out}")
 
 
 def main(argv=None):
@@ -478,6 +519,19 @@ def main(argv=None):
     p.add_argument("logs", nargs="+")
     p.add_argument("-o", "--out", default="inventory.csv")
     p.set_defaults(fn=cmd_export)
+
+    p = sub.add_parser("prices", help="US prices (TCGCSV), trends and risers")
+    p.add_argument("action", choices=["update", "movers", "report"],
+                   help="update: download today's prices; movers: biggest risers; report: your cards' prices")
+    p.add_argument("--games", nargs="+", default=["onepiece", "riftbound", "pokemon"],
+                   help="onepiece riftbound pokemon pokemon-jp magic")
+    p.add_argument("--db", default=str(Path.home() / ".sortbuddy" / "prices.db"))
+    p.add_argument("--max-price", type=float, help="movers: only cards cheaper than this (USD)")
+    p.add_argument("--limit", type=int, default=30)
+    p.add_argument("--catalog", help="report: your card list")
+    p.add_argument("--logs", nargs="*", default=[], help="report: session logs (which cards you own)")
+    p.add_argument("-o", "--out", default="price-report.csv")
+    p.set_defaults(fn=cmd_prices)
 
     p = sub.add_parser("listings", help="sale listings (photos + text) for the valuable cards photographed")
     p.add_argument("catalog")
