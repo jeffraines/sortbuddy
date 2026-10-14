@@ -31,6 +31,7 @@ from .fingerprint import FingerprintIndex, hamming, phash, sharpness
 from .identify import Identifier
 from .lighting import assess, glare_mask
 from .photos import SMALL_QUALITY, SMALL_SIZE, photo_tier
+from .listings import append_manifest, export_listings
 from .proposal import propose
 from .rules import Rule, RuleError
 from .gui_rules import RuleBuilder
@@ -332,7 +333,11 @@ class App:
         self.photo_min_var = tk.StringVar(value=str(self.settings.get("photo_min", "1")))
         ttk.Entry(row, textvariable=self.photo_min_var, width=5).pack(side="left")
         ttk.Label(row, text="  (cheaper: small photo)", style="Dim.TLabel").pack(side="left")
-        ttk.Button(side, text="Export inventory…", command=self.export).grid(sticky="ew", pady=(8, 0))
+        row = ttk.Frame(side)
+        row.grid(sticky="ew", pady=(8, 0))
+        ttk.Button(row, text="Export inventory…", command=self.export).pack(side="left", fill="x", expand=True)
+        ttk.Button(row, text="Make sale listings…", command=self.make_listings).pack(side="left", fill="x",
+                                                                                       expand=True, padx=(6, 0))
 
         section("Activity")
         self.log = tk.Text(side, height=8, width=36, bg=PANEL, fg=DIM, relief="flat", wrap="word",
@@ -518,6 +523,7 @@ class App:
                 "focus": self.focus_var.get().strip(), "rule": self.rule_var.get(),
                 "resolution": self.res_var.get(), "sound": self.sound_var.get(),
                 "exposure": "" if self.auto_exposure.get() else int(self.exposure_scale.get()),
+                "krw_per_usd": self.settings.get("krw_per_usd", 1400),
                 "keep_tuned": self.keep_tuned.get(), "rotate": getattr(self, "rotation", 0),
                 "photos": self.photos_var.get() if hasattr(self, "photos_var") else False,
                 "photo_min": self.photo_min_var.get().strip() if hasattr(self, "photo_min_var") else "1",
@@ -1154,7 +1160,7 @@ class App:
         photo = track.pop("photo", None)
         if photo is None or (result is not None and result.card_id == self.last_card_id):
             return
-        folder = self.log_path.parent.parent / "photos" / self.log_path.stem
+        folder = session_dir = self.log_path.parent.parent / "photos" / self.log_path.stem
         try:
             folder.mkdir(parents=True, exist_ok=True)
             self.photo_count = getattr(self, "photo_count", 0) + 1
@@ -1178,6 +1184,12 @@ class App:
             ok, data = cv2.imencode(".jpg", photo, [cv2.IMWRITE_JPEG_QUALITY, quality])
             if ok:
                 path.write_bytes(data.tobytes())  # (cv2.imwrite can't do non-English paths on Windows)
+                fields = result.fields if result is not None else {}
+                prices = [p for p in (fields.get("price"), fields.get("price_foil")) if isinstance(p, (int, float))]
+                append_manifest(session_dir, {"file": path.relative_to(session_dir).as_posix(),
+                                              "id": result.card_id if result is not None else "",
+                                              "name": fields.get("name", ""), "tier": tier,
+                                              "price_usd": max(prices) if prices else None, "side": "front"})
         except OSError as e:
             print(f"Couldn't save the photo: {e}\n")
 
@@ -1436,6 +1448,38 @@ class App:
                 cli.main(["export", path, *logs, "-o", out])
             except SystemExit as e:
                 messagebox.showerror("SortBuddy", str(e.code))
+
+    def make_listings(self) -> None:
+        """Sale listings (photos + Korean/English text) for the valuable cards
+        photographed in one sorting session."""
+        photos = Path(self.catalog_var.get()).parent / "photos"
+        folder = filedialog.askdirectory(title="Pick a photo folder (one sorting session)",
+                                         initialdir=photos if photos.exists() else None)
+        if not folder:
+            return
+        from tkinter import simpledialog
+        rate = simpledialog.askfloat("SortBuddy", "Won per US dollar (for asking prices):",
+                                     initialvalue=float(self.settings.get("krw_per_usd", 1400)), minvalue=1)
+        if not rate:
+            return
+        self.settings["krw_per_usd"] = rate
+        try:
+            min_usd = float(self.photo_min_var.get().strip().lstrip("$") or 0)
+        except ValueError:
+            min_usd = 1.0
+        out = Path(folder) / "listings"
+        try:
+            path = Path(self.catalog_var.get())
+            catalog = Catalog.load(path) if path.is_file() else getattr(self, "catalog", Catalog([]))
+            n = export_listings(catalog, [folder], out, min_usd, rate)
+        except (OSError, ValueError) as e:
+            messagebox.showerror("SortBuddy", f"Couldn't write the listings: {e}")
+            return
+        messagebox.showinfo("SortBuddy", f"{n} listing{'s' * (n != 1)} written to\n{out}\n\n"
+                            "Each folder has the photos and a listing.txt to copy into Bunjang or Danggeun. "
+                            "Check each card's condition and price before posting.")
+        if n and sys.platform == "win32":
+            os.startfile(out)  # noqa: S606 - open the folder for the user
 
 
 def main() -> None:

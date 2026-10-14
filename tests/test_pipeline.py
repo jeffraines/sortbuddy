@@ -475,3 +475,28 @@ def test_photo_tier():
     assert photo_tier({"rarity": "Common"}, 1.0) == "small"      # no price: go by rarity
     assert photo_tier({"rarity": "epic"}, 1.0) == "full"
     assert photo_tier({}, 1.0) == "full"
+
+
+def test_listings(tmp_path):
+    import csv as _csv
+    from sortbuddy.catalog import Card, Catalog
+    from sortbuddy.listings import append_manifest, export_listings, krw
+    cat = Catalog([Card("OP09-004", {"name": "Shanks", "name_ko": "샹크스", "game": "onepiece", "set": "OP09",
+                                     "number": 4, "rarity": "sr", "language": "ko", "price": 12.5}),
+                   Card("OP09-010", {"name": "Bulk Guy", "game": "onepiece", "price": 0.1})])
+    shoot = tmp_path / "photos" / "s1"
+    (shoot / "small").mkdir(parents=True)
+    for i, (cid, tier, price) in enumerate([("OP09-004", "full", 12.5), ("OP09-004", "full", 12.5),
+                                            ("OP09-010", "small", 0.1), ("", "full", None)], 1):
+        f = (f"small/{i}.jpg" if tier == "small" else f"{i}.jpg")
+        (shoot / f).write_bytes(b"jpg")
+        append_manifest(shoot, {"file": f, "id": cid, "tier": tier, "price_usd": price, "side": "front"})
+    out = tmp_path / "listings"
+    assert export_listings(cat, [shoot], out, min_usd=1.0, krw_per_usd=1400) == 1   # bulk and unknown left out
+    rows = list(_csv.DictReader((out / "listings.csv").open(encoding="utf-8-sig")))
+    assert rows[0]["id"] == "OP09-004" and rows[0]["quantity"] == "2" and rows[0]["asking_krw"] == "18000"
+    folder = out / rows[0]["folder"]
+    text = (folder / "listing.txt").read_text(encoding="utf-8")
+    assert "[원피스 카드게임] 샹크스 OP09-004 SR 한글판" in text and "18,000원" in text
+    assert sorted(p.name for p in folder.glob("*.jpg")) == ["01.jpg", "02.jpg"]
+    assert krw(0.5, 1400) == 1000 and krw(3, 1400) == 4500

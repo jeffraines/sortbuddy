@@ -408,6 +408,13 @@ def cmd_export(args):
     print(f"Wrote {n} distinct cards to {args.out}")
 
 
+def cmd_listings(args):
+    from .listings import export_listings
+    catalog = Catalog.load(args.catalog)
+    n = export_listings(catalog, args.photos, args.out, args.min_usd, args.krw_per_usd)
+    print(f"Wrote {n} listings to {args.out}")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="sortbuddy", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -471,6 +478,14 @@ def main(argv=None):
     p.add_argument("logs", nargs="+")
     p.add_argument("-o", "--out", default="inventory.csv")
     p.set_defaults(fn=cmd_export)
+
+    p = sub.add_parser("listings", help="sale listings (photos + text) for the valuable cards photographed")
+    p.add_argument("catalog")
+    p.add_argument("photos", nargs="+", help="photo folders of sorting sessions")
+    p.add_argument("-o", "--out", default="listings")
+    p.add_argument("--min-usd", type=float, default=1.0, help="only cards worth at least this")
+    p.add_argument("--krw-per-usd", type=float, default=1400.0, help="exchange rate for asking prices")
+    p.set_defaults(fn=cmd_listings)
 
     args = ap.parse_args(argv)
     args.fn(args)
