@@ -1,0 +1,124 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="860" viewBox="0 0 1200 860" font-family="Helvetica, Arial, sans-serif">
+  <rect width="1200" height="860" fill="#ffffff"/>
+  <text x="30" y="40" font-size="24" font-weight="bold" fill="#222">SortBuddy wiring: Raspberry Pi 4, 2 servos, stepper, 2 cameras</text>
+  <text x="30" y="64" font-size="14" fill="#555">Two supplies: Pi on its own USB-C adapter, motors on the 5V 5A adapter. Only GND is shared; the two 5 V lines never touch.</text>
+
+  <!-- ===== Raspberry Pi ===== -->
+  <rect x="30" y="100" width="330" height="430" rx="14" fill="#e8f5e9" stroke="#2e7d32" stroke-width="3"/>
+  <text x="50" y="132" font-size="20" font-weight="bold" fill="#2e7d32">Raspberry Pi 4</text>
+  <text x="50" y="154" font-size="13" fill="#555">(via the T-cobbler, pins labelled by GPIO)</text>
+
+  <g font-size="15">
+    <!-- pin rows -->
+    <rect x="60" y="175" width="270" height="34" rx="6" fill="#fff" stroke="#999"/>
+    <circle cx="80" cy="192" r="8" fill="#f9a825"/><text x="98" y="197">GPIO18  (pin 12)</text><text x="250" y="197" fill="#e65100" font-weight="bold">gate</text>
+    <rect x="60" y="215" width="270" height="34" rx="6" fill="#fff" stroke="#999"/>
+    <circle cx="80" cy="232" r="8" fill="#fb8c00"/><text x="98" y="237">GPIO19  (pin 35)</text><text x="250" y="237" fill="#e65100" font-weight="bold">tray</text>
+    <rect x="60" y="265" width="270" height="34" rx="6" fill="#fff" stroke="#999"/>
+    <circle cx="80" cy="282" r="8" fill="#1e88e5"/><text x="98" y="287">GPIO17  (pin 11)</text><text x="250" y="287" fill="#1565c0" font-weight="bold">IN1</text>
+    <rect x="60" y="305" width="270" height="34" rx="6" fill="#fff" stroke="#999"/>
+    <circle cx="80" cy="322" r="8" fill="#8e24aa"/><text x="98" y="327">GPIO27  (pin 13)</text><text x="250" y="327" fill="#1565c0" font-weight="bold">IN2</text>
+    <rect x="60" y="345" width="270" height="34" rx="6" fill="#fff" stroke="#999"/>
+    <circle cx="80" cy="362" r="8" fill="#00897b"/><text x="98" y="367">GPIO22  (pin 15)</text><text x="250" y="367" fill="#1565c0" font-weight="bold">IN3</text>
+    <rect x="60" y="385" width="270" height="34" rx="6" fill="#fff" stroke="#999"/>
+    <circle cx="80" cy="402" r="8" fill="#6d4c41"/><text x="98" y="407">GPIO23  (pin 16)</text><text x="250" y="407" fill="#1565c0" font-weight="bold">IN4</text>
+    <rect x="60" y="435" width="270" height="34" rx="6" fill="#fff" stroke="#999"/>
+    <circle cx="80" cy="452" r="8" fill="#212121"/><text x="98" y="457" font-weight="bold">GND  (pin 14)</text>
+  </g>
+  <text x="50" y="500" font-size="13" fill="#555">Fan: Pi 5V + GND (pins 4, 6) or the T-board's</text>
+  <text x="50" y="517" font-size="13" fill="#555">5V/GND rows. Never to the motor rails.</text>
+
+  <!-- Pi power -->
+  <rect x="60" y="560" width="270" height="44" rx="8" fill="#f1f8e9" stroke="#558b2f" stroke-width="2"/>
+  <text x="195" y="588" font-size="15" text-anchor="middle">Pi adapter 5V 3A → USB-C</text>
+  <line x1="195" y1="560" x2="195" y2="530" stroke="#558b2f" stroke-width="4"/>
+
+  <!-- USB devices -->
+  <rect x="30" y="630" width="330" height="200" rx="12" fill="#eef4ff" stroke="#1e88e5" stroke-width="2"/>
+  <text x="50" y="660" font-size="17" font-weight="bold" fill="#1565c0">Pi USB ports</text>
+  <text x="50" y="690" font-size="14">• Top camera → blue USB 3 port</text>
+  <text x="50" y="715" font-size="14">• Bottom camera → black USB 2 port</text>
+  <text x="50" y="740" font-size="14">• LED strip (touch dimmer) → any port</text>
+  <text x="50" y="765" font-size="14">• Keep each camera in the same port:</text>
+  <text x="62" y="785" font-size="14">SortBuddy knows them by port</text>
+  <text x="50" y="810" font-size="13" fill="#555">Check: python3 scripts/test_cameras.py</text>
+
+  <!-- ===== Motor power ===== -->
+  <rect x="690" y="95" width="320" height="60" rx="10" fill="#fff3e0" stroke="#ef6c00" stroke-width="3"/>
+  <text x="850" y="122" font-size="17" font-weight="bold" text-anchor="middle" fill="#e65100">Motor adapter 5V 5A</text>
+  <text x="850" y="143" font-size="13" text-anchor="middle" fill="#555">barrel jack → screw terminal (+ / −)</text>
+
+  <!-- rails -->
+  <rect x="430" y="185" width="740" height="26" rx="4" fill="#ffebee" stroke="#c62828" stroke-width="2"/>
+  <text x="440" y="203" font-size="14" font-weight="bold" fill="#c62828">+5V rail (motors only)</text>
+  <rect x="430" y="219" width="740" height="26" rx="4" fill="#eceff1" stroke="#263238" stroke-width="2"/>
+  <text x="440" y="237" font-size="14" font-weight="bold" fill="#263238">− GND rail (shared)</text>
+  <line x1="860" y1="155" x2="860" y2="185" stroke="#c62828" stroke-width="5"/>
+  <line x1="985" y1="155" x2="985" y2="219" stroke="#263238" stroke-width="5"/>
+  <text x="868" y="176" font-size="13" fill="#c62828">+</text><text x="993" y="176" font-size="13" fill="#263238">−</text>
+
+  <!-- capacitor -->
+  <line x1="1094" y1="150" x2="1094" y2="186" stroke="#666" stroke-width="2"/>
+  <line x1="1110" y1="150" x2="1110" y2="220" stroke="#666" stroke-width="2"/>
+  <rect x="1088" y="105" width="28" height="48" rx="7" fill="#1565c0"/>
+  <rect x="1106" y="105" width="10" height="48" fill="#bbdefb"/>
+  <text x="1080" y="98" font-size="12" fill="#333">1000µF 16V</text>
+  <text x="1005" y="272" font-size="12" fill="#555">capacitor: stripe side (−) to GND rail</text>
+  <!-- Pi GND to rail -->
+  <path d="M330 452 L395 452 L395 232 L430 232" fill="none" stroke="#212121" stroke-width="4"/>
+  <text x="340" y="478" font-size="12" fill="#212121"></text>
+
+  <!-- ===== Gate servo ===== -->
+  <rect x="470" y="320" width="190" height="120" rx="12" fill="#fffde7" stroke="#f9a825" stroke-width="3"/>
+  <text x="565" y="350" font-size="17" font-weight="bold" text-anchor="middle">Gate servo</text>
+  <text x="565" y="370" font-size="13" text-anchor="middle" fill="#555">MG90S</text>
+  <text x="490" y="398" font-size="13" fill="#c62828">red → +5V rail</text>
+  <text x="490" y="416" font-size="13" fill="#5d4037">brown → GND rail</text>
+  <text x="490" y="434" font-size="13" fill="#e65100">orange → GPIO18</text>
+  <line x1="530" y1="320" x2="530" y2="211" stroke="#c62828" stroke-width="3"/>
+  <line x1="560" y1="320" x2="560" y2="245" stroke="#5d4037" stroke-width="3"/>
+  <path d="M600 320 L600 290 L380 290 L380 192 L330 192" fill="none" stroke="#f9a825" stroke-width="3"/>
+
+  <!-- ===== Tray servo ===== -->
+  <rect x="700" y="320" width="190" height="120" rx="12" fill="#fff3e0" stroke="#fb8c00" stroke-width="3"/>
+  <text x="795" y="350" font-size="17" font-weight="bold" text-anchor="middle">Tray servo</text>
+  <text x="795" y="370" font-size="13" text-anchor="middle" fill="#555">MG90S</text>
+  <text x="720" y="398" font-size="13" fill="#c62828">red → +5V rail</text>
+  <text x="720" y="416" font-size="13" fill="#5d4037">brown → GND rail</text>
+  <text x="720" y="434" font-size="13" fill="#e65100">orange → GPIO19</text>
+  <line x1="760" y1="320" x2="760" y2="211" stroke="#c62828" stroke-width="3"/>
+  <line x1="790" y1="320" x2="790" y2="245" stroke="#5d4037" stroke-width="3"/>
+  <path d="M830 320 L830 300 L370 300 L370 232 L330 232" fill="none" stroke="#fb8c00" stroke-width="3"/>
+
+  <!-- ===== ULN2003 + stepper ===== -->
+  <rect x="470" y="520" width="300" height="190" rx="12" fill="#e3f2fd" stroke="#1565c0" stroke-width="3"/>
+  <text x="620" y="550" font-size="17" font-weight="bold" text-anchor="middle">ULN2003 driver board</text>
+  <g font-size="14">
+    <text x="490" y="582" fill="#1e88e5">IN1 ← GPIO17</text>
+    <text x="490" y="604" fill="#8e24aa">IN2 ← GPIO27</text>
+    <text x="490" y="626" fill="#00897b">IN3 ← GPIO22</text>
+    <text x="490" y="648" fill="#6d4c41">IN4 ← GPIO23</text>
+    <text x="640" y="582" fill="#c62828">+ (5-12V) ← +5V rail</text>
+    <text x="640" y="604" fill="#263238">− ← GND rail</text>
+  </g>
+  <text x="490" y="690" font-size="12" fill="#555">Remove nothing; the jumper next to +/− stays on.</text>
+  <path d="M500 520 L500 470 L345 470 L345 282 L330 282" fill="none" stroke="#1e88e5" stroke-width="3"/>
+  <path d="M515 520 L515 478 L352 478 L352 322 L330 322" fill="none" stroke="#8e24aa" stroke-width="3"/>
+  <path d="M530 520 L530 486 L359 486 L359 362 L330 362" fill="none" stroke="#00897b" stroke-width="3"/>
+  <path d="M545 520 L545 494 L366 494 L366 402 L330 402" fill="none" stroke="#6d4c41" stroke-width="3"/>
+  <path d="M700 520 L700 470 L920 470 L920 211" fill="none" stroke="#c62828" stroke-width="3"/>
+  <path d="M740 520 L740 480 L940 480 L940 245" fill="none" stroke="#263238" stroke-width="3"/>
+
+  <rect x="820" y="560" width="170" height="110" rx="55" fill="#cfd8dc" stroke="#455a64" stroke-width="3"/>
+  <text x="905" y="605" font-size="15" font-weight="bold" text-anchor="middle">28BYJ-48</text>
+  <text x="905" y="625" font-size="13" text-anchor="middle" fill="#555">feeder stepper</text>
+  <line x1="770" y1="615" x2="820" y2="615" stroke="#455a64" stroke-width="6"/>
+  <text x="772" y="640" font-size="11" fill="#555">5-pin plug</text>
+
+  <!-- rules box -->
+  <rect x="430" y="740" width="740" height="95" rx="10" fill="#fafafa" stroke="#bbb"/>
+  <text x="450" y="768" font-size="14" font-weight="bold">Before powering on</text>
+  <text x="450" y="790" font-size="13">1. Ribbon red stripe = pin 1 (3V3 corner, toward the SD card). 2. Capacitor stripe to GND rail.</text>
+  <text x="450" y="810" font-size="13">3. Motor adapter + goes ONLY to the +5V rail, never to a Pi pin. 4. Power motors first, then the Pi.</text>
+  <text x="450" y="828" font-size="13">5. Test one part at a time: scripts/test_servo.py, test_stepper.py, test_cameras.py, then test_all.py.</text>
+</svg>

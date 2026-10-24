@@ -1,5 +1,7 @@
 # Wiring: Pi 4, two servos, stepper
 
+![Wiring diagram](wiring.png)
+
 Two separate power supplies. The **Pi** runs on its own USB-C 5V 3A adapter.
 **Motors** run on the 5V 5A adapter. The two **grounds are joined** and the two
 **5 V lines are never joined**.
@@ -58,6 +60,19 @@ On the T-cobbler board the pins are labelled by **GPIO number**
    then the Pi.
 
 ## Test, one part at a time
+
+Test scripts, in `scripts/` (each explains itself at the top):
+
+| Script | Tests |
+|---|---|
+| `python3 scripts/test_servo.py gate` | gate servo: sweep, then nudge it by hand to find its angles (`m closed`, `m open` to note them) |
+| `python3 scripts/test_servo.py tray` | tray servo, the same (`m level`, `m yes`, `m no`) |
+| `python3 scripts/test_stepper.py` | stepper: quarter turn and back, then try distances and speeds |
+| `python3 scripts/test_cameras.py` | lists cameras by USB port, format, fps, focus score, saves snapshots; `--live` for a live view while focusing |
+| `python3 scripts/test_both_cameras.py` | both cameras at once, the way the machine uses them |
+| `python3 scripts/test_all.py` | guided check of everything, asking before each step |
+
+Or the same from SortBuddy:
 
 ```
 sortbuddy hw servo gate          # sweeps 90 -> 60 -> 120 -> 90
