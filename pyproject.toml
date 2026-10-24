@@ -21,3 +21,6 @@ sortbuddy-gui = "sortbuddy.gui:main"
 
 [tool.setuptools]
 packages = ["sortbuddy"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
