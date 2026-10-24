@@ -61,6 +61,93 @@ def cmd_cameras(args):
         print("No cameras found. Is the webcam plugged in and not in use by another app?")
 
 
+def usb_cameras() -> list[tuple[str, str]]:
+    """(stable path, USB port) for each camera on Linux, by the port it's
+    plugged into: /dev/v4l/by-path stays the same after a restart, unlike
+    /dev/video0, /dev/video1... which can swap between two identical cameras."""
+    root = Path("/dev/v4l/by-path")
+    if not root.exists():
+        return []
+    out = []
+    for p in sorted(root.iterdir()):
+        if p.name.endswith("video-index0"):
+            port = p.name.split("-usb-")[-1].split("-video")[0] if "-usb-" in p.name else p.name
+            out.append((str(p), port))
+    return out
+
+
+def cmd_hw(args):
+    from . import hardware
+    fake = True if args.fake else None
+    if args.part == "cameras":
+        cams = usb_cameras()
+        if not cams:
+            print("No /dev/v4l/by-path cameras (not Linux?). Falling back to numbered cameras:")
+            return cmd_cameras(argparse.Namespace(max=6))
+        out = Path(args.out)
+        out.mkdir(parents=True, exist_ok=True)
+        for i, (path, port) in enumerate(cams):
+            cap = cv2.VideoCapture(path, cv2.CAP_V4L2)
+            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+            ok, frame = cap.read()
+            t, n = time.time(), 0
+            while ok and n < 30 and time.time() - t < 5:
+                ok, frame = cap.read()
+                n += 1
+            fps = n / max(1e-6, time.time() - t)
+            code = int(cap.get(cv2.CAP_PROP_FOURCC))
+            fourcc = "".join(chr((code >> 8 * k) & 0xFF) for k in range(4))
+            if ok:
+                snap = out / f"camera-{i}-{port.replace(':', '_')}.jpg"
+                cv2.imwrite(str(snap), frame)
+                print(f"camera {i}: port {port}  {frame.shape[1]}x{frame.shape[0]} {fourcc} {fps:.0f} fps"
+                      f"  -> {snap}\n    {path}")
+            else:
+                print(f"camera {i}: port {port}  opened but no picture\n    {path}")
+            cap.release()
+        return
+    if args.part == "servo":
+        servo = hardware.make_servo(hardware.GATE_PIN if args.which == "gate" else hardware.TRAY_PIN,
+                                    args.which, fake)
+        try:
+            if args.angle is not None:
+                servo.move(args.angle)
+                print(f"{args.which} servo at {args.angle} deg")
+                time.sleep(1)
+            else:
+                print(f"Sweeping the {args.which} servo: 90 -> 60 -> 120 -> 90 (Ctrl+C to stop)")
+                for a in (90, 60, 90, 120, 90):
+                    servo.move(a)
+                    print(f"  {a} deg")
+                    time.sleep(0.8)
+        finally:
+            servo.close()
+        return
+    if args.part == "stepper":
+        stepper = hardware.make_stepper(fake)
+        try:
+            print(f"Stepper: {args.turns:+} turn(s) ({round(args.turns * hardware.STEPS_PER_TURN)} half-steps)")
+            stepper.turn(args.turns)
+            print("Done; coils released.")
+        finally:
+            stepper.close()
+        return
+    if args.part == "cycle":
+        m = hardware.Machine(fake=fake)
+        try:
+            for verdict in ("yes", "no", "?"):
+                print(f"Card -> {verdict}")
+                m.drop(verdict)
+                time.sleep(0.5)
+            if args.feed:
+                print("Feeder: one push")
+                m.feed()
+        finally:
+            m.close()
+
+
 def _index_path(catalog_path: str) -> Path:
     return Path(catalog_path).with_suffix(".index.npz")
 
@@ -519,6 +606,16 @@ def main(argv=None):
     p.add_argument("logs", nargs="+")
     p.add_argument("-o", "--out", default="inventory.csv")
     p.set_defaults(fn=cmd_export)
+
+    p = sub.add_parser("hw", help="test the machine's hardware: cameras, servos, stepper")
+    p.add_argument("part", choices=["cameras", "servo", "stepper", "cycle"])
+    p.add_argument("which", nargs="?", choices=["gate", "tray"], default="gate", help="servo: which one")
+    p.add_argument("--angle", type=float, help="servo: go to this angle (0-180) instead of sweeping")
+    p.add_argument("--turns", type=float, default=0.25, help="stepper: turns (negative = backwards)")
+    p.add_argument("--feed", action="store_true", help="cycle: also run the feeder once")
+    p.add_argument("--fake", action="store_true", help="no hardware: just print what would happen")
+    p.add_argument("-o", "--out", default="camera-test", help="cameras: folder for test snapshots")
+    p.set_defaults(fn=cmd_hw)
 
     p = sub.add_parser("prices", help="US prices (TCGCSV), trends and risers")
     p.add_argument("action", choices=["update", "movers", "report"],

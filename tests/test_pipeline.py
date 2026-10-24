@@ -540,3 +540,19 @@ def test_pricedb(tmp_path):
     top = pricedb.movers(db, "onepiece", max_price=5)
     assert top[0]["product_id"] == 10 and top[0]["comeback"]
     assert pricedb.card_number("001/298") == 1 and pricedb.card_number("OP09-004") == 4
+
+
+def test_hardware_fake():
+    from sortbuddy import hardware
+    assert abs(hardware.angle_to_pulse_ms(0) - 0.5) < 1e-9 and abs(hardware.angle_to_pulse_ms(180) - 2.4) < 1e-9
+    log = hardware.FakeLog()
+    m = hardware.Machine(fake=True)
+    m.gate.log = m.tray.log = log
+    m.a.settle = 0
+    m.drop("yes")
+    assert ("tray", round(hardware.angle_to_pulse_ms(m.a.tray_yes), 3)) in log.events
+    assert log.events[-2:] == [("tray", round(hardware.angle_to_pulse_ms(90), 3)),
+                               ("gate", round(hardware.angle_to_pulse_ms(90), 3))]   # back to ready
+    m.feed_steps = 16
+    m.feed()
+    assert m.feeder.position == 0 and m.feeder.levels == (0, 0, 0, 0)          # back home, coils off
