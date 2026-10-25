@@ -5,8 +5,9 @@ cameras live, to test and tune it.
     sortbuddy-control --fake     (no hardware: nothing moves, buttons just log)
 
 Sliders move the servos as you drag them; "set" stores the current angle as
-that position. Save writes everything to ~/.sortbuddy/hardware.json, which
-the machine uses from then on.
+that position. Every change is saved straight away to
+~/.sortbuddy/hardware.json, so it's there next time the panel opens, and
+the machine uses it too.
 """
 
 from __future__ import annotations
@@ -111,6 +112,7 @@ class CameraFeed(threading.Thread):
 class ControlPanel:
     def __init__(self, root: tk.Tk, fake: bool | None):
         self.root = root
+        self._timers: dict[str, str] = {}   # repeating window updates, cancelled on quit
         root.title("SortBuddy control panel" + (" (FAKE board)" if fake or not hardware.on_raspberry_pi() else ""))
         root.configure(bg=BG)
         self.m = hardware.Machine(fake=fake)
@@ -150,7 +152,6 @@ class ControlPanel:
         bar = tk.Frame(left, bg=BG)
         bar.pack(fill="x", pady=(8, 0))
         ttk.Button(bar, text="STOP", style="Stop.TButton", command=self.stop).pack(side="left")
-        ttk.Button(bar, text="Save settings", command=self.save).pack(side="left", padx=8)
         tk.Label(bar, textvariable=self.busy, bg=BG, fg=AMBER, font=(FONT, 10)).pack(side="left")
 
         self.camera_area(right)
@@ -184,6 +185,7 @@ class ControlPanel:
 
             def store(attr=attr, value=value):
                 setattr(self.a, attr, round(angle.get()))
+                self.changed()
                 value.config(text=f"{getattr(self.a, attr):.0f}°")
 
             ttk.Button(cell, text=name, width=7, command=go).pack(side="left")
@@ -202,7 +204,9 @@ class ControlPanel:
 
         def speed(*_):
             ms = round(self.speed.get(), 1)
-            self.a.step_ms = ms
+            if ms != self.a.step_ms:
+                self.a.step_ms = ms
+                self.changed()
             f.delay = ms / 1000
             per_turn = hardware.STEPS_PER_TURN * ms / 1000
             speed_label.config(text=f"{ms:.1f} ms/step  {per_turn:.0f} s/turn")
@@ -226,6 +230,7 @@ class ControlPanel:
         def set_feed(*_):
             try:
                 self.a.feed_steps = self.m.feed_steps = max(0, int(self.feed_steps.get()))
+                self.changed()
             except ValueError:
                 pass
 
@@ -240,7 +245,7 @@ class ControlPanel:
         self.position.config(text=f"position {p:+d} steps ({p / hardware.STEPS_PER_TURN:+.3f} turns)")
         if self.status != self.busy.get():
             self.busy.set(self.status)
-        self.root.after(100, self.refresh_position)
+        self._timers["position"] = self.root.after(100, self.refresh_position)
 
     def feed(self) -> None:
         self.m.feed()
@@ -269,6 +274,7 @@ class ControlPanel:
         def set_settle(*_):
             try:
                 self.a.settle = max(0.0, float(settle.get()))
+                self.changed()
             except ValueError:
                 pass
 
@@ -327,9 +333,23 @@ class ControlPanel:
         self.m.feeder.stop()
         self.status = "stopping…"
 
+    _save_pending = None
+
+    def changed(self) -> None:
+        """Save settings shortly after any change (once, after a burst of
+        slider moves or typing), so they're there next time the panel opens."""
+        if self._save_pending is not None:
+            self.root.after_cancel(self._save_pending)
+        self._save_pending = self.root.after(500, self.save)
+
     def save(self) -> None:
-        self.a.save()
-        self.status = f"saved to {hardware.SETTINGS}"
+        self._save_pending = None
+        try:
+            self.a.save()
+        except OSError as e:
+            self.status = f"couldn't save settings: {e}"
+            return
+        self.status = "settings saved"
 
     # ---------------------------------------------------------- cameras
     def camera_area(self, parent) -> None:
@@ -367,7 +387,7 @@ class ControlPanel:
                 info.config(text=f"{frame.shape[1]}×{frame.shape[0]}  {feed.fps:.0f} fps  focus {sharp:.0f}"
                             + (f"  broken frames skipped {feed.broken}" if feed.broken else "")
                             + (f"  reconnected {feed.restarts}×" if feed.restarts else ""))
-        self.root.after(PREVIEW_MS, self.refresh_cameras)
+        self._timers["cameras"] = self.root.after(PREVIEW_MS, self.refresh_cameras)
 
     def snapshot(self) -> None:
         out = Path("camera-test")
@@ -381,6 +401,11 @@ class ControlPanel:
 
     # ---------------------------------------------------------- quit
     def quit(self) -> None:
+        if self._save_pending is not None:
+            self.root.after_cancel(self._save_pending)
+            self.save()
+        for timer in self._timers.values():
+            self.root.after_cancel(timer)
         self.stop()
         self.jobs.put(("quit", None, ()))
         for feed in self.feeds:

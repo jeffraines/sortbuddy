@@ -75,8 +75,8 @@ Test scripts, in `scripts/` (each explains itself at the top):
 **Control panel:** everything at once in one window: both servos on sliders,
 stepper jog buttons and speed, the machine's feed / YES / NO / ? moves, a
 repeating test cycle, both cameras live, and a big STOP. "set" stores a
-servo position, **Save settings** keeps them for the machine
-(`~/.sortbuddy/hardware.json`).
+servo position. Every change saves itself (`~/.sortbuddy/hardware.json`), so
+it's there next time, and the machine uses it.
 
 ```
 python3 -m sortbuddy.control           # or sortbuddy-control after pip install -e .
