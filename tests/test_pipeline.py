@@ -579,3 +579,13 @@ def test_stepper_ramp_stop_and_settings(tmp_path):
     assert hardware.Angles.load(tmp_path / "missing.json") == hardware.Angles()
     m = hardware.Machine(fake=True, angles=hardware.Angles.load(path))
     assert m.feed_steps == 800
+
+
+def test_truncated_frame():
+    import numpy as np
+    from sortbuddy.camera import truncated
+    frame = np.random.default_rng(0).integers(0, 255, (72, 128, 3), dtype=np.uint8)
+    assert not truncated(frame)
+    frame[40:] = 128                    # bottom lost over USB: flat grey
+    assert truncated(frame)
+    assert not truncated(np.full((72, 128, 3), 30, np.uint8))   # a dark scene is not "cut short"

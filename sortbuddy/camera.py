@@ -5,6 +5,15 @@ from __future__ import annotations
 import sys
 
 import cv2
+import numpy as np
+
+
+def truncated(frame) -> bool:
+    """True if a frame arrived cut short. When USB drops part of an MJPG
+    frame, the decoder fills the missing bottom with flat grey (128): a real
+    picture is never perfectly flat there."""
+    band = np.asarray(frame[-8:])
+    return band.size > 0 and int(band.max()) - int(band.min()) <= 2 and abs(float(band.mean()) - 128) < 3
 
 
 class Camera:
@@ -45,7 +54,12 @@ class Camera:
             self.set_focus(focus)
 
     def read(self):
-        return self.cap.read()
+        """The next complete frame (frames cut short over USB are skipped)."""
+        for _ in range(5):
+            ok, frame = self.cap.read()
+            if not ok or not truncated(frame):
+                return ok, frame
+        return ok, frame
 
     def release(self) -> None:
         self.cap.release()

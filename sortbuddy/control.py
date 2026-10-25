@@ -11,6 +11,7 @@ the machine uses from then on.
 
 from __future__ import annotations
 
+import os
 import queue
 import sys
 import threading
@@ -22,6 +23,7 @@ from tkinter import ttk
 import cv2
 
 from . import hardware
+from .camera import truncated
 
 try:  # quiet: probing cameras otherwise prints a wall of warnings
     cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_SILENT)
@@ -67,6 +69,7 @@ class CameraFeed(threading.Thread):
         self.frame = None
         self.fps = 0.0
         self.restarts = 0
+        self.broken = 0   # frames cut short over USB, skipped
         self.running = True
 
     def run(self) -> None:
@@ -74,7 +77,9 @@ class CameraFeed(threading.Thread):
         while self.running:
             ok, frame = self.cap.read() if self.cap is not None else (False, None)
             now = time.time()
-            if ok:
+            if ok and truncated(frame):
+                self.broken += 1
+            elif ok:
                 self.frame, last = frame, now
                 n += 1
             elif now - last > self.STALL:
@@ -347,6 +352,7 @@ class ControlPanel:
                 small = cv2.resize(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), None, fx=0.5, fy=0.5)
                 sharp = cv2.Laplacian(small, cv2.CV_64F).var()
                 info.config(text=f"{frame.shape[1]}×{frame.shape[0]}  {feed.fps:.0f} fps  focus {sharp:.0f}"
+                            + (f"  broken frames skipped {feed.broken}" if feed.broken else "")
                             + (f"  reconnected {feed.restarts}×" if feed.restarts else ""))
         self.root.after(80, self.refresh_cameras)
 
@@ -373,8 +379,18 @@ class ControlPanel:
             self.root.destroy()
 
 
+def hide_jpeg_warnings() -> None:
+    """libjpeg prints "Corrupt JPEG data" for every broken frame straight to
+    stderr; the panel counts those itself. Python's own messages still show."""
+    sys.stderr = os.fdopen(os.dup(2), "w", buffering=1)
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(devnull, 2)
+
+
 def main() -> None:
     fake = True if "--fake" in sys.argv else None
+    if "--verbose" not in sys.argv:
+        hide_jpeg_warnings()
     root = tk.Tk()
     ControlPanel(root, fake)
     root.mainloop()
