@@ -22,9 +22,10 @@ SortBuddy can be tried anywhere.
 
 from __future__ import annotations
 
+import json
 import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
 GATE_PIN, TRAY_PIN = 18, 19
@@ -42,6 +43,10 @@ MIN_PULSE_MS, MAX_PULSE_MS = 0.67, 2.23
 HALF_STEP = [(1, 0, 0, 0), (1, 1, 0, 0), (0, 1, 0, 0), (0, 1, 1, 0),
              (0, 0, 1, 0), (0, 0, 1, 1), (0, 0, 0, 1), (1, 0, 0, 1)]
 STEPS_PER_TURN = 4096
+# Each move starts and ends at RAMP_START s/step and speeds up over
+# RAMP_STEPS steps: from standstill the motor stalls at speeds it can hold
+# fine once turning, so ramping lets it run faster than a flat start.
+RAMP_START, RAMP_STEPS = 0.003, 150
 
 
 def angle_to_pulse_ms(angle: float, lo: float = MIN_PULSE_MS, hi: float = MAX_PULSE_MS) -> float:
@@ -145,19 +150,38 @@ class Stepper:
     def __init__(self, pins=STEPPER_PINS, delay: float = 0.0015):
         self.pins, self.delay = tuple(pins), delay
         self._phase = 0
+        self._stop = False
         self.position = 0  # half-steps since start
 
     def _set(self, levels) -> None:
         raise NotImplementedError
 
+    def _delay_at(self, i: int, n: int) -> float:
+        if self.delay <= 0 or self.delay >= RAMP_START:
+            return self.delay
+        k = min(i, n - 1 - i, RAMP_STEPS) / RAMP_STEPS
+        return RAMP_START + (self.delay - RAMP_START) * k
+
     def step(self, n: int) -> None:
         d = 1 if n >= 0 else -1
-        for _ in range(abs(n)):
+        self._stop = False
+        for i in range(abs(n)):
+            if self._stop:
+                break
             self._phase = (self._phase + d) % len(HALF_STEP)
             self._set(HALF_STEP[self._phase])
             self.position += d
-            time.sleep(self.delay)
+            time.sleep(self._delay_at(i, abs(n)))
         self.release()
+
+    def stop(self) -> None:
+        """Stop a move in progress (from another thread)."""
+        self._stop = True
+
+    @property
+    def stopped(self) -> bool:
+        """True if the last move was cut short by stop()."""
+        return self._stop
 
     def turn(self, turns: float) -> None:
         self.step(round(turns * STEPS_PER_TURN))
@@ -175,10 +199,15 @@ class GpiozeroStepper(Stepper):
         super().__init__(pins, delay)
         from gpiozero import DigitalOutputDevice  # noqa: PLC0415 - only on a Pi
         self._outs = [DigitalOutputDevice(p) for p in self.pins]
+        self._levels = (None,) * len(self.pins)
 
     def _set(self, levels) -> None:
-        for out, v in zip(self._outs, levels):
-            out.value = v
+        # Only touch the pins that change: one per half-step, so less time
+        # spent in Python per step.
+        for out, old, v in zip(self._outs, self._levels, levels):
+            if v != old:
+                out.value = v
+        self._levels = tuple(levels)
 
     def close(self) -> None:
         self.release()
@@ -235,27 +264,49 @@ def make_stepper(fake: bool | None = None, **kw) -> Stepper:
 
 
 # ----------------------------------------------------------------- machine
+SETTINGS = Path.home() / ".sortbuddy" / "hardware.json"
+
+
 @dataclass
 class Angles:
-    """Positions in degrees; tune these on the real build."""
+    """Positions in degrees and feeder settings; tune these on the real
+    build (the control panel saves them to ~/.sortbuddy/hardware.json)."""
     gate_closed: float = 90
     gate_open: float = 30
     tray_level: float = 90
     tray_yes: float = 65    # rolled ~25 deg one way
     tray_no: float = 115    # ...and the other
     settle: float = 0.35    # seconds for a card to slide off
+    feed_steps: int = 1200  # half-steps the pusher moves per card
+    step_ms: float = 1.5    # stepper speed, ms per half-step
+
+    @classmethod
+    def load(cls, path: Path = SETTINGS) -> "Angles":
+        try:
+            data = json.loads(Path(path).read_text())
+        except (OSError, ValueError):
+            return cls()
+        names = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in data.items() if k in names})
+
+    def save(self, path: Path = SETTINGS) -> None:
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(asdict(self), indent=2))
 
 
 class Machine:
     """Gate + rolling scan tray + feeder, in the safe order: a card is only
     fed when the tray is level and the gate is closed."""
 
-    def __init__(self, fake: bool | None = None, angles: Angles | None = None, feed_steps: int = 1200):
-        self.a = angles or Angles()
+    def __init__(self, fake: bool | None = None, angles: Angles | None = None, feed_steps: int | None = None):
+        self.a = angles or Angles.load()
         self.gate = make_servo(GATE_PIN, "gate", fake)
         self.tray = make_servo(TRAY_PIN, "tray", fake)
         self.feeder = make_stepper(fake)
-        self.feed_steps = feed_steps
+        if not isinstance(self.feeder, FakeStepper):
+            self.feeder.delay = self.a.step_ms / 1000
+        self.feed_steps = feed_steps if feed_steps is not None else self.a.feed_steps
         self.ready()
 
     def ready(self) -> None:
@@ -265,8 +316,10 @@ class Machine:
 
     def feed(self) -> None:
         """Push one card out of the hopper, then pull the pusher back."""
+        start = self.feeder.position
         self.feeder.step(self.feed_steps)
-        self.feeder.step(-self.feed_steps)
+        if not self.feeder.stopped:
+            self.feeder.step(start - self.feeder.position)
 
     def drop(self, verdict: str) -> None:
         """'yes', 'no' or anything else ('?'): send the card on, then reset."""

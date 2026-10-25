@@ -546,7 +546,7 @@ def test_hardware_fake():
     from sortbuddy import hardware
     assert abs(hardware.angle_to_pulse_ms(0) - hardware.MIN_PULSE_MS) < 1e-9 and abs(hardware.angle_to_pulse_ms(90) - 1.45) < 1e-9
     log = hardware.FakeLog()
-    m = hardware.Machine(fake=True)
+    m = hardware.Machine(fake=True, angles=hardware.Angles())
     m.gate.log = m.tray.log = log
     m.a.settle = 0
     m.drop("yes")
@@ -556,3 +556,26 @@ def test_hardware_fake():
     m.feed_steps = 16
     m.feed()
     assert m.feeder.position == 0 and m.feeder.levels == (0, 0, 0, 0)          # back home, coils off
+
+
+def test_stepper_ramp_stop_and_settings(tmp_path):
+    from sortbuddy import hardware
+    st = hardware.FakeStepper(delay=0.001)
+    n = 2 * hardware.RAMP_STEPS + 10
+    assert st._delay_at(0, n) == hardware.RAMP_START == st._delay_at(n - 1, n)      # slow start and end
+    assert st._delay_at(n // 2, n) == 0.001                                           # full speed between
+    slow = hardware.FakeStepper(delay=0.005)
+    assert slow._delay_at(0, n) == 0.005                                              # no ramp when slow
+
+    st.delay = 0
+    st.stop()
+    st.step(10)                         # a fresh move clears an old stop
+    assert st.position == 10 and not st.stopped
+
+    a = hardware.Angles(gate_open=12, feed_steps=800, step_ms=1.1)
+    path = tmp_path / "hw.json"
+    a.save(path)
+    assert hardware.Angles.load(path) == a
+    assert hardware.Angles.load(tmp_path / "missing.json") == hardware.Angles()
+    m = hardware.Machine(fake=True, angles=hardware.Angles.load(path))
+    assert m.feed_steps == 800

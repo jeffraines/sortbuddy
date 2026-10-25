@@ -18,6 +18,7 @@ sortbuddy = "sortbuddy.cli:main"
 
 [project.gui-scripts]
 sortbuddy-gui = "sortbuddy.gui:main"
+sortbuddy-control = "sortbuddy.control:main"
 
 [tool.setuptools]
 packages = ["sortbuddy"]
