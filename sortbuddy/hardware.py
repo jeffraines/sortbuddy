@@ -32,8 +32,11 @@ STEPPER_PINS = (17, 27, 22, 23)
 PWM_CHANNEL = {18: 0, 19: 1}   # GPIO -> hardware PWM channel (with the pwm-2chan overlay)
 
 SERVO_HZ = 50
-# MG90S: about 0.5 ms = 0 deg, 2.4 ms = 180 deg. Adjust per servo if the ends buzz.
-MIN_PULSE_MS, MAX_PULSE_MS = 0.5, 2.4
+# Pulse widths for 0 and 180 deg. Measured on the MG90S copies in use: the
+# common 0.5-2.4 ms range turned them ~220 deg, i.e. ~116 deg per ms around
+# the 1.45 ms centre, so 180 real degrees is 1.45 +/- 0.78 ms. If a servo's
+# angles look off, measure its full swing and adjust these.
+MIN_PULSE_MS, MAX_PULSE_MS = 0.67, 2.23
 
 # 28BYJ-48 half-step sequence (IN1..IN4); 4096 half-steps per output turn.
 HALF_STEP = [(1, 0, 0, 0), (1, 1, 0, 0), (0, 1, 0, 0), (0, 1, 1, 0),

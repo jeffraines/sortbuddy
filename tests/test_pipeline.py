@@ -544,7 +544,7 @@ def test_pricedb(tmp_path):
 
 def test_hardware_fake():
     from sortbuddy import hardware
-    assert abs(hardware.angle_to_pulse_ms(0) - 0.5) < 1e-9 and abs(hardware.angle_to_pulse_ms(180) - 2.4) < 1e-9
+    assert abs(hardware.angle_to_pulse_ms(0) - hardware.MIN_PULSE_MS) < 1e-9 and abs(hardware.angle_to_pulse_ms(90) - 1.45) < 1e-9
     log = hardware.FakeLog()
     m = hardware.Machine(fake=True)
     m.gate.log = m.tray.log = log
