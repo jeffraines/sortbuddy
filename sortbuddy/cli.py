@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import re
 import sys
 import time
@@ -68,11 +69,19 @@ def usb_cameras() -> list[tuple[str, str]]:
     root = Path("/dev/v4l/by-path")
     if not root.exists():
         return []
-    out = []
+    out, seen = [], set()
     for p in sorted(root.iterdir()):
-        if p.name.endswith("video-index0"):
-            port = p.name.split("-usb-")[-1].split("-video")[0] if "-usb-" in p.name else p.name
-            out.append((str(p), port))
+        # Newer systems list each USB camera twice ("-usb-" and "-usbv2-"),
+        # and the Pi's own video chips (codec, ISP) appear here too: keep
+        # one entry per real USB camera.
+        m = re.search(r"-usb(?:v\d+)?-(.+)-video-index0$", p.name)
+        if not m:
+            continue
+        dev = os.path.realpath(p)
+        if dev in seen:
+            continue
+        seen.add(dev)
+        out.append((str(p), m.group(1)))
     return out
 
 

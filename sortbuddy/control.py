@@ -32,6 +32,7 @@ except AttributeError:
 from .theme import ACCENT, AMBER, BG, DIM, FG, FONT, GREEN, LINE, PANEL, RED, SIDE
 
 PREVIEW_W, PREVIEW_H = 480, 270
+PREVIEW_MS = 125   # preview refresh: 8 per second is plenty to aim and focus
 JOGS = [("« 1", -1.0), ("« ¼", -0.25), ("« 1/16", -1 / 16), ("1/16 »", 1 / 16), ("¼ »", 0.25), ("1 »", 1.0)]
 
 
@@ -58,6 +59,10 @@ def find_cameras() -> list[tuple[str | int, str]]:
 
 class CameraFeed(threading.Thread):
     """Keeps the newest frame of one camera, so the window never waits.
+
+    Every frame is taken off the camera (grab) so nothing piles up, but only
+    the ones the window asks for are decoded (retrieve): decoding 720p JPEGs
+    from two cameras nonstop keeps a Pi 4 busy enough to drop USB data.
     If the camera stops sending frames, it is closed and opened again."""
 
     STALL = 3.0  # seconds without a frame before reconnecting
@@ -70,18 +75,24 @@ class CameraFeed(threading.Thread):
         self.fps = 0.0
         self.restarts = 0
         self.broken = 0   # frames cut short over USB, skipped
+        self.wanted = threading.Event()
         self.running = True
 
     def run(self) -> None:
         n, t, last = 0, time.time(), time.time()
         while self.running:
-            ok, frame = self.cap.read() if self.cap is not None else (False, None)
+            ok = self.cap.grab() if self.cap is not None else False
             now = time.time()
-            if ok and truncated(frame):
-                self.broken += 1
-            elif ok:
-                self.frame, last = frame, now
+            if ok:
+                last = now
                 n += 1
+                if self.wanted.is_set():
+                    ok, frame = self.cap.retrieve()
+                    if ok and truncated(frame):
+                        self.broken += 1
+                    elif ok:
+                        self.frame = frame
+                        self.wanted.clear()
             elif now - last > self.STALL:
                 if self.cap is not None:
                     self.cap.release()
@@ -345,8 +356,10 @@ class ControlPanel:
     def refresh_cameras(self) -> None:
         from .gui import to_photo
         for feed, view, info in self.views:
-            if feed.frame is not None:
-                frame = feed.frame
+            frame, feed.frame = feed.frame, None
+            feed.wanted.set()
+            if frame is not None:
+                feed.last = frame
                 view.image = to_photo(frame, PREVIEW_W, PREVIEW_H)
                 view.config(image=view.image)
                 small = cv2.resize(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), None, fx=0.5, fy=0.5)
@@ -354,15 +367,16 @@ class ControlPanel:
                 info.config(text=f"{frame.shape[1]}×{frame.shape[0]}  {feed.fps:.0f} fps  focus {sharp:.0f}"
                             + (f"  broken frames skipped {feed.broken}" if feed.broken else "")
                             + (f"  reconnected {feed.restarts}×" if feed.restarts else ""))
-        self.root.after(80, self.refresh_cameras)
+        self.root.after(PREVIEW_MS, self.refresh_cameras)
 
     def snapshot(self) -> None:
         out = Path("camera-test")
         out.mkdir(exist_ok=True)
         stamp = time.strftime("%Y%m%d-%H%M%S")
         for i, (feed, _, _) in enumerate(self.views):
-            if feed.frame is not None:
-                cv2.imwrite(str(out / f"{stamp}-cam{i + 1}.jpg"), feed.frame)
+            frame = getattr(feed, "last", None)
+            if frame is not None:
+                cv2.imwrite(str(out / f"{stamp}-cam{i + 1}.jpg"), frame)
         self.status = f"snapshots in {out.resolve()}"
 
     # ---------------------------------------------------------- quit
