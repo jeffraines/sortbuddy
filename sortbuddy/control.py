@@ -33,44 +33,63 @@ PREVIEW_W, PREVIEW_H = 480, 270
 JOGS = [("« 1", -1.0), ("« ¼", -0.25), ("« 1/16", -1 / 16), ("1/16 »", 1 / 16), ("¼ »", 0.25), ("1 »", 1.0)]
 
 
-def open_cameras() -> list[tuple[str, cv2.VideoCapture]]:
-    """Both cameras by USB port on the Pi; the first two webcams elsewhere."""
+CAMERA_FPS = 15   # plenty for a card lying still; half the USB load of 30
+
+
+def open_camera(path) -> cv2.VideoCapture | None:
+    cap = cv2.VideoCapture(path, cv2.CAP_V4L2) if isinstance(path, str) else cv2.VideoCapture(path)
+    if not cap.isOpened():
+        return None
+    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    cap.set(cv2.CAP_PROP_FPS, CAMERA_FPS)
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    return cap
+
+
+def find_cameras() -> list[tuple[str | int, str]]:
+    """(path, port) for both cameras by USB port on the Pi; the first two webcams elsewhere."""
     from .cli import usb_cameras
-    found = usb_cameras() or [(i, f"camera {i}") for i in range(2)]
-    out = []
-    for path, port in found[:2]:
-        cap = cv2.VideoCapture(path, cv2.CAP_V4L2) if isinstance(path, str) else cv2.VideoCapture(path)
-        if not cap.isOpened():
-            continue
-        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-        out.append((port, cap))
-    return out
+    return (usb_cameras() or [(i, f"camera {i}") for i in range(2)])[:2]
 
 
 class CameraFeed(threading.Thread):
-    """Keeps the newest frame of one camera, so the window never waits."""
+    """Keeps the newest frame of one camera, so the window never waits.
+    If the camera stops sending frames, it is closed and opened again."""
 
-    def __init__(self, port: str, cap: cv2.VideoCapture):
+    STALL = 3.0  # seconds without a frame before reconnecting
+
+    def __init__(self, path, port: str):
         super().__init__(daemon=True)
-        self.port, self.cap = port, cap
+        self.path, self.port = path, port
+        self.cap = open_camera(path)
         self.frame = None
         self.fps = 0.0
+        self.restarts = 0
         self.running = True
 
     def run(self) -> None:
-        n, t = 0, time.time()
+        n, t, last = 0, time.time(), time.time()
         while self.running:
-            ok, frame = self.cap.read()
-            if not ok:
+            ok, frame = self.cap.read() if self.cap is not None else (False, None)
+            now = time.time()
+            if ok:
+                self.frame, last = frame, now
+                n += 1
+            elif now - last > self.STALL:
+                if self.cap is not None:
+                    self.cap.release()
+                time.sleep(0.5)
+                self.cap = open_camera(self.path)
+                self.restarts += 1
+                last = time.time()
+            else:
                 time.sleep(0.05)
-                continue
-            self.frame = frame
-            n += 1
-            if time.time() - t >= 1:
-                self.fps, n, t = n / (time.time() - t), 0, time.time()
-        self.cap.release()
+            if now - t >= 1:
+                self.fps, n, t = n / (now - t), 0, now
+        if self.cap is not None:
+            self.cap.release()
 
 
 class ControlPanel:
@@ -298,7 +317,7 @@ class ControlPanel:
 
     # ---------------------------------------------------------- cameras
     def camera_area(self, parent) -> None:
-        self.feeds = [CameraFeed(port, cap) for port, cap in open_cameras()]
+        self.feeds = [f for f in (CameraFeed(path, port) for path, port in find_cameras()) if f.cap is not None]
         for feed in self.feeds:
             feed.start()
         self.views = []
@@ -325,8 +344,10 @@ class ControlPanel:
                 frame = feed.frame
                 view.image = to_photo(frame, PREVIEW_W, PREVIEW_H)
                 view.config(image=view.image)
-                sharp = cv2.Laplacian(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var()
-                info.config(text=f"{frame.shape[1]}×{frame.shape[0]}  {feed.fps:.0f} fps  focus {sharp:.0f}")
+                small = cv2.resize(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), None, fx=0.5, fy=0.5)
+                sharp = cv2.Laplacian(small, cv2.CV_64F).var()
+                info.config(text=f"{frame.shape[1]}×{frame.shape[0]}  {feed.fps:.0f} fps  focus {sharp:.0f}"
+                            + (f"  reconnected {feed.restarts}×" if feed.restarts else ""))
         self.root.after(80, self.refresh_cameras)
 
     def snapshot(self) -> None:
@@ -344,6 +365,8 @@ class ControlPanel:
         self.jobs.put(("quit", None, ()))
         for feed in self.feeds:
             feed.running = False
+        for feed in self.feeds:   # let each camera finish its read before Python exits
+            feed.join(timeout=2)
         try:
             self.m.close()
         finally:
