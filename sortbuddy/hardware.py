@@ -22,6 +22,7 @@ SortBuddy can be tried anywhere.
 
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -79,15 +80,28 @@ class SysfsServo(Servo):
         self.dir = self.ROOT / f"pwm{self.ch}"
         if not self.dir.exists():
             (self.ROOT / "export").write_text(str(self.ch))
-            for _ in range(50):  # udev needs a moment to set permissions
-                if (self.dir / "period").exists():
-                    break
-                time.sleep(0.02)
+        # After an export, udev takes a moment to hand the new files to the
+        # gpio group; until then writes fail with "permission denied".
+        deadline = time.time() + 3
+        while not all(os.access(self.dir / f, os.W_OK) for f in ("enable", "period", "duty_cycle")):
+            if time.time() > deadline:
+                raise PermissionError(
+                    f"no write access to {self.dir}. Is your user in the gpio group? "
+                    "Run: sudo usermod -aG gpio $USER  then log out and back in")
+            time.sleep(0.05)
         self._write("enable", 0)
+        self._write("duty_cycle", 0)
         self._write("period", int(1e9 / SERVO_HZ))
 
     def _write(self, attr: str, value) -> None:
-        (self.dir / attr).write_text(str(value))
+        for attempt in range(20):
+            try:
+                (self.dir / attr).write_text(str(value))
+                return
+            except PermissionError:
+                if attempt == 19:
+                    raise
+                time.sleep(0.05)
 
     def _pulse(self, ms: float | None) -> None:
         if ms is None:
@@ -205,10 +219,9 @@ def make_servo(gpio: int, name: str = "", fake: bool | None = None, **kw) -> Ser
     if fake or (fake is None and not on_raspberry_pi()):
         return FakeServo(gpio, name, **kw)
     if gpio in PWM_CHANNEL and SysfsServo.available():
-        try:
-            return SysfsServo(gpio, name, **kw)
-        except OSError as e:
-            print(f"Hardware PWM unavailable on GPIO{gpio} ({e}); using software PWM")
+        # With the pwm-2chan overlay the pin belongs to the PWM hardware, so
+        # software PWM can't take it over: report the real problem instead.
+        return SysfsServo(gpio, name, **kw)
     return GpiozeroServo(gpio, name, **kw)
 
 
