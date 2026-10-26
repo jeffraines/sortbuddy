@@ -34,6 +34,7 @@ GATE_X = 115     # gate flap centre, from the slide end of the window
 CARD_X = 67      # where the card's centre rests (camera centre)
 W, H = 210, 297  # A4 in mm
 M = 10           # page margin
+PAGES = 10
 
 GREY = (0.55, 0.55, 0.55)
 BLUE = (0.1, 0.35, 0.75)
@@ -312,10 +313,146 @@ def part_N(c):  # servo bracket (later)
     text(c, 3, 3, "two layers glued together", 2.4)
 
 
+
+# ------------------------------------------------------------------ hopper
+# Hopper coordinates along the travel direction, from the back face of the
+# back wall: back wall 0-5, stack 5-101 (96 long: sleeved card 91 + room),
+# front wall 101-106, lip 106-126. The friction wheel's centre is at 67.
+WHEEL_U = 67
+WHEEL_R = 20
+GAP = 3          # front wall stops this far above the floor; the strip sets the real gap
+
+
+def part_P1(c):  # hopper floor 126 x 70
+    poly(c, [(0, 0), (126, 0), (126, CH), (0, CH)])
+    cut_rect(c, WHEEL_U - 18, 28, 36, 14)
+    guide_rect(c, 0, 0, 5, CH)
+    guide_rect(c, 101, 0, 5, CH)
+    guide_rect(c, 20, 42, 80, 5, BLUE)
+    text(c, 8, CH - 8, "P1  Hopper floor  x1", 4, True)
+    text(c, 8, CH - 13, "Tape or plastic sheet on top (not over the slot).", 2.6)
+    text(c, WHEEL_U, 22, "wheel slot", 2.6, anchor="centre")
+    text(c, 22, 49.5, "bracket Q goes UNDER the floor here", 2.4, color=BLUE)
+    text(c, 2.5, 3, "back", 2.2, color=GREY)
+    text(c, 103.5, 12, "front", 2.2, color=GREY, anchor="centre")
+    text(c, 116, 40, "lip:", 2.5, anchor="centre")
+    text(c, 116, 36, "rests on", 2.5, anchor="centre")
+    text(c, 116, 32, "the slide", 2.5, anchor="centre")
+    arrow(c, 110, 20, 124, 20)
+
+
+def part_P2(c, n):  # hopper side wall 106 x 60
+    poly(c, [(0, 0), (106, 0), (106, 60), (0, 60)])
+    c.setFillColorRGB(0.92, 0.92, 0.92)
+    c.rect(0, 0, 106, T, stroke=0, fill=1)
+    guide_rect(c, 0, T, 5, 60 - T)
+    guide_rect(c, 101, T + GAP, 5, 60 - T - GAP)
+    text(c, 8, 50, f"P{n + 1}  Hopper side wall", 3.8, True)
+    text(c, 8, 44, "Glued against the floor's edge (grey band = floor).", 2.6)
+    text(c, 8, 39.5, "Back wall at the left, front wall at the right,", 2.6)
+    text(c, 8, 35, f"its bottom {GAP} mm above the floor (the throat).", 2.6)
+    text(c, 99, 12, "throat", 2.4, color=BLUE, anchor="right")
+
+
+def part_P4(c):  # back wall
+    poly(c, [(0, 0), (CH, 0), (CH, 55), (0, 55)])
+    text(c, 4, 46, "P4  Back wall", 3.6, True)
+    text(c, 4, 40, "stands on the floor,", 2.5)
+    text(c, 4, 36, "between the side walls", 2.5)
+
+
+def part_P5(c):  # front wall with two slots for the throat strip's screws
+    h = 60 - T - GAP
+    poly(c, [(0, 0), (CH, 0), (CH, h), (0, h)])
+    for x in (17, 53):
+        cut_rect(c, x - 1.75, 19, 3.5, 14)
+    text(c, 4, h - 8, "P5  Front wall", 3.6, True)
+    text(c, 4, h - 13, f"bottom edge {GAP} mm above the floor", 2.4)
+    text(c, 4, 4, "slots: M3 screws for strip T", 2.3)
+
+
+def part_T(c):  # throat strip, cut from plastic or leftover acrylic
+    c.setFillColorRGB(0.9, 0.95, 1)
+    c.rect(0, 0, CH, 40, stroke=0, fill=1)
+    poly(c, [(0, 0), (CH, 0), (CH, 40), (0, 40)])
+    for x in (17, 53):
+        c.setStrokeColorRGB(0, 0, 0)
+        c.circle(x, 29, 1.75)
+    text(c, 4, 20, "T  Throat strip  (PLASTIC)", 3, True)
+    text(c, 4, 15, "file-folder sheet or acrylic offcut;", 2.3)
+    text(c, 4, 11, "screwed on the front wall's outside.", 2.3)
+    text(c, 4, 5, "Bottom edge = the gap: ~1.5 cards.", 2.3, color=BLUE)
+
+
+def part_Q(c):  # motor bracket, hangs under the floor
+    poly(c, [(0, 0), (80, 0), (80, 50), (0, 50)])
+    bx, bz = WHEEL_U - 20, 28          # motor body centre (floor u 20..100 -> bracket 0..80)
+    c.setStrokeColorRGB(0, 0, 0)
+    c.setLineWidth(0.35)
+    c.circle(bx, bz, 14.5)
+    for dx in (-17.5, 17.5):
+        c.circle(bx + dx, bz, 2.1)
+    plus(c, bx, bz + 8, 4)
+    text(c, 3, 45, "Q  Motor bracket  x1", 3.2, True)
+    text(c, bx + 6, bz + 9, "shaft", 2.3, color=BLUE)
+    text(c, 3, 9, "Top edge under the floor (blue line on P1).", 2.2)
+    text(c, 3, 5, "Motor's flat front on THIS side, body", 2.2)
+    text(c, 3, 1.5, "through the big hole. M3 screws in the tabs.", 2.2)
+
+
+def part_R(c):  # brace
+    poly(c, [(0, 0), (25, 0), (0, 25)])
+    text(c, 2, 3, "R brace x2", 2.4, True)
+
+
+def part_W(c):  # wheel disc
+    c.setStrokeColorRGB(0, 0, 0)
+    c.setLineWidth(0.35)
+    c.circle(WHEEL_R, WHEEL_R, WHEEL_R)
+    c.circle(WHEEL_R, WHEEL_R, 2.5)
+    guide(c, WHEEL_R - 1.5, WHEEL_R - 3, WHEEL_R - 1.5, WHEEL_R + 3, BLUE)
+    guide(c, WHEEL_R + 1.5, WHEEL_R - 3, WHEEL_R + 1.5, WHEEL_R + 3, BLUE)
+    text(c, WHEEL_R, WHEEL_R + 9, "W  Wheel", 3, True, anchor="centre")
+    text(c, WHEEL_R, WHEEL_R - 9, "make 2,", 2.4, anchor="centre")
+    text(c, WHEEL_R, WHEEL_R - 13, "glue together", 2.4, anchor="centre")
+
+
+def part_S(c):  # stack weight
+    poly(c, [(0, 0), (64, 0), (64, 86), (0, 86)])
+    text(c, 4, 76, "S  Stack weight", 3.6, True)
+    for i, s in enumerate(["Sits on top of the cards", "so the last few still", "press on the wheel.",
+                           "Tape coins on top", "(about 30-50 g)."]):
+        text(c, 4, 68 - 4.5 * i, s, 2.6)
+
+
+def hopper_section(c, x0, y0):
+    """Cross-section of the feeder, not to scale."""
+    c.setStrokeColorRGB(0, 0, 0)
+    c.setLineWidth(0.5)
+    c.line(x0, y0, x0 + 58, y0)                   # floor top, behind the slot
+    c.line(x0 + 72, y0, x0 + 150, y0)             # floor after the slot
+    c.line(x0, y0, x0, y0 + 40)                   # back wall
+    c.line(x0 + 110, y0 + 4, x0 + 110, y0 + 40)   # front wall
+    c.setStrokeColorRGB(*BLUE)
+    c.line(x0 + 112, y0 + 1.5, x0 + 112, y0 + 26)  # throat strip
+    c.setStrokeColorRGB(0, 0, 0)
+    for i in range(7):                             # the stack
+        c.line(x0 + 3, y0 + 1 + 1.6 * i, x0 + 106 - (8 if i == 0 else 0) + (14 if i == 0 else 0), y0 + 1 + 1.6 * i)
+    c.circle(x0 + 65, y0 - 9, 10)                  # wheel
+    c.rect(x0 + 15, y0 + 13, 60, 6)                # weight
+    arrow(c, x0 + 122, y0 + 2, x0 + 145, y0 + 2)
+    text(c, x0 + 65, y0 - 24, "wheel W turns, the bottom card goes out", 2.6, anchor="centre")
+    text(c, x0 + 45, y0 + 21, "weight S", 2.4, anchor="centre")
+    text(c, x0 + 114, y0 + 30, "strip T: gap ~1.5 cards", 2.4, color=BLUE)
+    text(c, x0 + 128, y0 + 5, "to the slide", 2.4, color=BLUE)
+    text(c, x0, y0 - 30, "Side view, not to scale. The strip lets one card under and holds the next one back.",
+         2.6, color=GREY)
+
+
 # ------------------------------------------------------------------ pages
 def header(c, page, title):
     text(c, M, H - M - 4, f"SortBuddy scan station: {title}", 4.5, True)
-    text(c, W - M, H - M - 4, f"page {page} / 8   ·   5 mm foam board   ·   print at 100%", 3,
+    text(c, W - M, H - M - 4, f"page {page} / {PAGES}   ·   5 mm foam board   ·   print at 100%", 3,
          color=GREY, anchor="right")
 
 
@@ -384,6 +521,9 @@ def page1(c):
         ("7. Stand: wedges K on base L, lower hood on the wedges, tall end under the slide.", False),
         ("8. Light: LED strip inside the upper hood around the camera, covered with tissue or paper.", False),
         ("   In the lower hood put it along the side walls, not next to the camera (glare off the acrylic).", False),
+        ("9. Hopper (pages 9-10): walls P2-P5 around floor P1. Motor on bracket Q under the floor, wheel W", False),
+        ("   (rubber bands round its rim) poking ~1 mm up through the slot. Strip T on the front wall sets the", False),
+        ("   gap to ~1.5 cards. The floor's lip rests 20 mm onto the top of the slide.", False),
     ]
     for s, bold in lines:
         if bold:
@@ -399,7 +539,8 @@ def page1(c):
     parts = ["Parts (5 mm foam):", "A slide floor x1", "B slide walls x2", "C1, C2 upper hood",
              "D1, D2 lower hood", "E top plate", "F bottom plate", "G gate flap",
              "H splices x4", "J joiners x2", "K wedges x2", "L base",
-             "M, N sorter (later)", "+ acrylic 80 x 130"]
+             "M, N sorter (later)", "P1-P5 hopper", "Q motor bracket", "R braces x2",
+             "S weight, W wheel x2", "+ acrylic 80 x 130", "+ plastic strip T"]
     for i, s in enumerate(parts):
         text(c, W - M - 42, 150 - 4.3 * i, s, 2.9, i == 0)
     text(c, M, 14, "Card: 63 x 88 mm (sleeved ~66 x 91). Channel 70 mm. Cameras 130 mm from the window, "
@@ -481,10 +622,49 @@ def main() -> None:
         with Place(c, M + 100, top - 100 - 14 - 40 - 8 - 40):
             part_N(c)
 
+    def p9():
+        header(c, 9, "hopper floor and side walls")
+        top = H - M - 12
+        with Place(c, M + 20, top - CH):
+            part_P1(c)
+        with Place(c, M + 30, top - CH - 12 - 60):
+            part_P2(c, 1)
+        with Place(c, M + 30, top - CH - 12 - 60 - 10 - 60):
+            part_P2(c, 2)
+        c.saveState()
+        c.translate(M + 25, 34)
+        c.scale(0.62, 0.62)
+        hopper_section(c, 0, 0)
+        c.restoreState()
+
+    def p10():
+        header(c, 10, "hopper walls, wheel, motor bracket")
+        top = H - M - 12
+        with Place(c, M, top - 55):
+            part_P4(c)
+        with Place(c, M + 80, top - (60 - T - GAP)):
+            part_P5(c)
+        y2 = top - 55 - 12 - 50
+        with Place(c, M, y2):
+            part_Q(c)
+        with Place(c, M + 90, y2 + 5):
+            part_W(c)
+        with Place(c, M + 140, y2 + 5):
+            part_W(c)
+        y3 = y2 - 12 - 86
+        with Place(c, M, y3):
+            part_S(c)
+        with Place(c, M + 75, y3 + 46):
+            part_T(c)
+        with Place(c, M + 75, y3 + 5):
+            part_R(c)
+        with Place(c, M + 110, y3 + 5):
+            part_R(c)
+
     for draw in (lambda: page1(c), p2, p3,
                  p_lower(1, part_E, "lower hood D1, top plate E"),
                  p_lower(2, part_F, "lower hood D2, bottom plate F"),
-                 p6, p7, p8):
+                 p6, p7, p8, p9, p10):
         page(draw)
     c.save()
     print(f"wrote {OUT}")

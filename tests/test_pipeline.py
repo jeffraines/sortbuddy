@@ -555,7 +555,10 @@ def test_hardware_fake():
                                ("gate", round(hardware.angle_to_pulse_ms(90), 3))]   # back to ready
     m.feed_steps = 16
     m.feed()
-    assert m.feeder.position == 0 and m.feeder.levels == (0, 0, 0, 0)          # back home, coils off
+    assert m.feeder.position == 16 and m.feeder.levels == (0, 0, 0, 0)         # wheel: forward only, coils off
+    m.a.feed_return = True
+    m.feed()
+    assert m.feeder.position == 16                                              # pusher: out and back
 
 
 def test_stepper_ramp_stop_and_settings(tmp_path):

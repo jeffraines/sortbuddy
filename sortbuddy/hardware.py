@@ -277,7 +277,8 @@ class Angles:
     tray_yes: float = 65    # rolled ~25 deg one way
     tray_no: float = 115    # ...and the other
     settle: float = 0.35    # seconds for a card to slide off
-    feed_steps: int = 1200  # half-steps the pusher moves per card
+    feed_steps: int = 2600  # half-steps per card (wheel: ~0.6 turn moves a card ~80 mm)
+    feed_return: bool = False  # True for a pusher that must come back after each card
     step_ms: float = 1.5    # stepper speed, ms per half-step
 
     @classmethod
@@ -315,10 +316,11 @@ class Machine:
         time.sleep(self.a.settle)
 
     def feed(self) -> None:
-        """Push one card out of the hopper, then pull the pusher back."""
+        """Send one card out of the hopper: the friction wheel turns forward
+        (a pusher, with feed_return, also comes back afterwards)."""
         start = self.feeder.position
         self.feeder.step(self.feed_steps)
-        if not self.feeder.stopped:
+        if self.a.feed_return and not self.feeder.stopped:
             self.feeder.step(start - self.feeder.position)
 
     def drop(self, verdict: str) -> None:
