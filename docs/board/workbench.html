@@ -21,6 +21,7 @@
   --p-business: #c4610f;
   --p-printing: #c2257a;
   --p-buddy: #4b5b6b;
+  --p-home: #8a6d1e;
   --chip-mix: 14%;
   --display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
   --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
@@ -29,12 +30,12 @@
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
   --bg: #11161c; --panel: #171e26; --card: #1f2832; --fg: #e6ecf2; --dim: #93a1b0; --line: #2c3845;
   --accent: #5b9cff; --accent-fg: #0b1220; --warn: #f0a250; --danger: #ff7b6e;
-  --p-sortbuddy: #5b9cff; --p-software: #b28cff; --p-storage: #3fcf9f; --p-business: #f0a250; --p-printing: #ff79c0; --p-buddy: #9fb0c2;
+  --p-sortbuddy: #5b9cff; --p-software: #b28cff; --p-storage: #3fcf9f; --p-business: #f0a250; --p-printing: #ff79c0; --p-buddy: #9fb0c2; --p-home: #e2c35a;
   --chip-mix: 22%; color-scheme: dark } }
 :root[data-theme="dark"] {
   --bg: #11161c; --panel: #171e26; --card: #1f2832; --fg: #e6ecf2; --dim: #93a1b0; --line: #2c3845;
   --accent: #5b9cff; --accent-fg: #0b1220; --warn: #f0a250; --danger: #ff7b6e;
-  --p-sortbuddy: #5b9cff; --p-software: #b28cff; --p-storage: #3fcf9f; --p-business: #f0a250; --p-printing: #ff79c0; --p-buddy: #9fb0c2;
+  --p-sortbuddy: #5b9cff; --p-software: #b28cff; --p-storage: #3fcf9f; --p-business: #f0a250; --p-printing: #ff79c0; --p-buddy: #9fb0c2; --p-home: #e2c35a;
   --chip-mix: 22%; color-scheme: dark }
 
 * { box-sizing: border-box; }
@@ -105,7 +106,7 @@ textarea { min-height: 110px; resize: vertical; }
   <header>
     <div>
       <h1>Buddy Workbench</h1>
-      <p class="sub">Everything for SortBuddy and the Buddy apps in one place. Keep <strong>Now</strong> short; park every new idea in <strong>Ideas</strong> and get back to building.</p>
+      <p class="sub">Projects, home and life in one place. Keep <strong>Now</strong> short; park every new idea in <strong>Ideas</strong> and get back to building.</p>
     </div>
     <div class="tools">
       <button class="btn primary" id="add-btn" type="button">+ Add task</button>
@@ -150,6 +151,7 @@ const PROJECTS = {
   business: "Business",
   printing: "3D printing",
   buddy: "Buddy apps",
+  home: "Home & space",
 };
 
 const $ = (id) => document.getElementById(id);
