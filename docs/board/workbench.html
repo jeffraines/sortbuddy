@@ -3,7 +3,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap">
 <style>
-/* Layout: a maker's pegboard — five columns of task cards that wrap to one column on a phone; projects read as coloured tags. */
+/* Layout: a maker's pegboard — "resume here" project cards on top, then five task columns that wrap to one column on a phone. Projects carry their own hue. */
 :root {
   --bg: #e9edf1;
   --panel: #f6f8fa;
@@ -15,13 +15,8 @@
   --accent-fg: #ffffff;
   --warn: #b4560c;
   --danger: #c0352b;
-  --p-sortbuddy: #1f6feb;
-  --p-software: #7b3fe4;
-  --p-storage: #0f8a6a;
-  --p-business: #c4610f;
-  --p-printing: #c2257a;
-  --p-buddy: #4b5b6b;
-  --p-home: #8a6d1e;
+  --chip-s: 62%;
+  --chip-l: 38%;
   --chip-mix: 14%;
   --display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
   --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
@@ -30,13 +25,11 @@
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
   --bg: #11161c; --panel: #171e26; --card: #1f2832; --fg: #e6ecf2; --dim: #93a1b0; --line: #2c3845;
   --accent: #5b9cff; --accent-fg: #0b1220; --warn: #f0a250; --danger: #ff7b6e;
-  --p-sortbuddy: #5b9cff; --p-software: #b28cff; --p-storage: #3fcf9f; --p-business: #f0a250; --p-printing: #ff79c0; --p-buddy: #9fb0c2; --p-home: #e2c35a;
-  --chip-mix: 22%; color-scheme: dark } }
+  --chip-s: 70%; --chip-l: 72%; --chip-mix: 20%; color-scheme: dark } }
 :root[data-theme="dark"] {
   --bg: #11161c; --panel: #171e26; --card: #1f2832; --fg: #e6ecf2; --dim: #93a1b0; --line: #2c3845;
   --accent: #5b9cff; --accent-fg: #0b1220; --warn: #f0a250; --danger: #ff7b6e;
-  --p-sortbuddy: #5b9cff; --p-software: #b28cff; --p-storage: #3fcf9f; --p-business: #f0a250; --p-printing: #ff79c0; --p-buddy: #9fb0c2; --p-home: #e2c35a;
-  --chip-mix: 22%; color-scheme: dark }
+  --chip-s: 70%; --chip-l: 72%; --chip-mix: 20%; color-scheme: dark }
 
 * { box-sizing: border-box; }
 body { background: var(--bg); color: var(--fg); font: 15px/1.45 var(--body);
@@ -47,7 +40,7 @@ header { display: flex; flex-wrap: wrap; align-items: end; justify-content: spac
 h1 { font: 800 clamp(26px, 4vw, 38px)/1 var(--display); margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
 .sub { color: var(--dim); margin: 6px 0 0; max-width: 60ch; }
 .tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.tools select { width: auto; min-width: 180px; }
 
 button { font: inherit; cursor: pointer; }
 .btn { border: 1px solid var(--line); background: var(--card); color: var(--fg); border-radius: 8px; padding: 7px 12px; font-weight: 500; }
@@ -55,14 +48,31 @@ button { font: inherit; cursor: pointer; }
 .btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 600; }
 .btn.danger { color: var(--danger); }
 .btn.danger.armed { background: var(--danger); color: var(--card); border-color: var(--danger); }
+.btn.ghost { border-color: transparent; background: transparent; color: var(--dim); padding-inline: 6px; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-.chip { --c: var(--p-buddy); display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 3px 10px; font-size: 12.5px; font-weight: 600;
-  color: var(--c); background: color-mix(in srgb, var(--c) var(--chip-mix), transparent); border: 1px solid transparent; white-space: nowrap; }
+.chip { --c: hsl(var(--h, 210) var(--chip-s) var(--chip-l)); display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 3px 10px; font-size: 12.5px; font-weight: 600;
+  color: var(--c); background: color-mix(in srgb, var(--c) var(--chip-mix), transparent); white-space: nowrap; }
 .chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--c); }
-button.chip { border-color: transparent; }
-button.chip[aria-pressed="true"] { border-color: var(--c); }
-button.chip.all { --c: var(--fg); }
+.chip.gray { --c: var(--dim); }
+
+/* project strip */
+.section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.section-head h2 { font: 700 20px var(--display); margin: 0; }
+.areas { display: grid; gap: 14px; }
+.area h3 { margin: 0 0 6px; font: 600 11.5px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
+.projects { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.proj { --c: hsl(var(--h, 210) var(--chip-s) var(--chip-l)); text-align: left; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 11px 12px;
+  display: grid; gap: 6px; color: var(--fg); min-width: 0; align-content: start; }
+.proj:hover { border-color: var(--c); }
+.proj .top { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+.proj .name { font: 700 16px var(--display); color: var(--c); overflow-wrap: anywhere; }
+.proj .when { font: 500 11.5px var(--mono); color: var(--dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.proj .when.stale { color: var(--warn); }
+.proj .lbl { font: 600 10.5px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--dim); }
+.proj .txt { font-size: 13.5px; overflow-wrap: anywhere; }
+.proj .next { font-weight: 600; }
+.proj .wait { font-size: 12.5px; color: var(--warn); }
 
 .board { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); align-items: start; }
 .col { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; display: grid; gap: 10px; align-content: start; min-width: 0; }
@@ -82,45 +92,60 @@ button.chip.all { --c: var(--fg); }
 .task .t { font-weight: 600; overflow-wrap: anywhere; }
 .task .meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .task .notes-mark { font: 500 11.5px var(--mono); color: var(--dim); }
-.col[data-col="done"] .task .t { color: var(--dim); text-decoration: line-through; text-decoration-color: var(--line); }
+.col[data-col="done"] .task .t, .col[data-col="dropped"] .task .t { color: var(--dim); text-decoration: line-through; text-decoration-color: var(--line); }
+.col[data-col="dropped"] { border-style: dashed; }
 
-.status { color: var(--dim); font-size: 13px; }
+.status { color: var(--dim); font-size: 13px; margin: 0; }
 .toast { position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--fg); color: var(--bg);
-  padding: 9px 14px; border-radius: 8px; font-size: 13.5px; max-width: calc(100% - 32px); }
+  padding: 9px 14px; border-radius: 8px; font-size: 13.5px; max-width: calc(100% - 32px); z-index: 20; }
 
-dialog { border: 1px solid var(--line); border-radius: 14px; background: var(--card); color: var(--fg); padding: 0; width: min(520px, calc(100% - 32px)); }
+dialog { border: 1px solid var(--line); border-radius: 14px; background: var(--card); color: var(--fg); padding: 0; width: min(560px, calc(100% - 32px)); max-height: calc(100% - 32px); }
 dialog::backdrop { background: color-mix(in srgb, #000 45%, transparent); }
 .dlg { display: grid; gap: 12px; padding: 18px; }
 .dlg h3 { font: 700 20px var(--display); margin: 0; }
+.dlg .what { color: var(--dim); margin: -6px 0 0; font-size: 14px; }
 label { display: grid; gap: 4px; font-size: 13px; font-weight: 600; color: var(--dim); }
+label.check { display: flex; align-items: center; gap: 8px; }
+label.check input { width: auto; }
 input, select, textarea { font: 15px/1.4 var(--body); color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; width: 100%; }
-textarea { min-height: 110px; resize: vertical; }
+textarea { min-height: 80px; resize: vertical; }
 .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; }
-.actions .right { display: flex; gap: 8px; margin-left: auto; }
+.actions .right { display: flex; gap: 8px; margin-left: auto; flex-wrap: wrap; }
 @media (max-width: 460px) { .row2 { grid-template-columns: 1fr; } }
-@media (prefers-reduced-motion: no-preference) { .task { transition: border-color .15s, opacity .15s; } }
+@media (prefers-reduced-motion: no-preference) { .task, .proj { transition: border-color .15s, opacity .15s; } }
 </style>
 
 <div class="wrap">
   <header>
     <div>
       <h1>Buddy Workbench</h1>
-      <p class="sub">Projects, home and life in one place. Keep <strong>Now</strong> short; park every new idea in <strong>Ideas</strong> and get back to building.</p>
+      <p class="sub">Projects, home and life in one place. Keep <strong>Now</strong> short; park new ideas in <strong>Ideas</strong>; before you stop, update the project's <strong>left off</strong> line.</p>
     </div>
     <div class="tools">
+      <label for="filter" class="sr" hidden>Project</label>
+      <select id="filter" aria-label="Show tasks for"></select>
       <button class="btn primary" id="add-btn" type="button">+ Add task</button>
     </div>
   </header>
-  <div class="filters" id="filters" role="group" aria-label="Filter by project"></div>
+
+  <section aria-labelledby="proj-h">
+    <div class="section-head">
+      <h2 id="proj-h">Resume here</h2>
+      <button class="btn ghost" id="proj-toggle" type="button" aria-expanded="true">Hide</button>
+    </div>
+    <div class="areas" id="areas"></div>
+  </section>
+
   <p class="status" id="status">Loading your board…</p>
   <main class="board" id="board"></main>
+  <div><button class="btn ghost" id="dropped-toggle" type="button">Show won't-do</button></div>
 </div>
 
 <dialog id="dlg">
   <form class="dlg" id="form" method="dialog">
     <h3 id="dlg-title">Add task</h3>
-    <label>Task<input id="f-title" required maxlength="140" autocomplete="off"></label>
+    <label>Task<input id="f-title" required maxlength="160" autocomplete="off"></label>
     <div class="row2">
       <label>Project<select id="f-project"></select></label>
       <label>Column<select id="f-col"></select></label>
@@ -130,7 +155,28 @@ textarea { min-height: 110px; resize: vertical; }
       <button class="btn danger" id="f-delete" type="button" hidden>Delete</button>
       <div class="right">
         <button class="btn" id="f-cancel" type="button">Cancel</button>
-        <button class="btn primary" id="f-save" type="submit">Save</button>
+        <button class="btn primary" type="submit">Save</button>
+      </div>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="pdlg">
+  <form class="dlg" id="pform" method="dialog">
+    <h3 id="p-name">Project</h3>
+    <p class="what" id="p-what"></p>
+    <label>Status<input id="p-status" maxlength="200" autocomplete="off"></label>
+    <label>Where I left off<textarea id="p-left" maxlength="1000"></textarea></label>
+    <label>Next step<textarea id="p-next" maxlength="600" style="min-height:56px"></textarea></label>
+    <label>Waiting on (one per line)<textarea id="p-wait" maxlength="2000" style="min-height:56px"></textarea></label>
+    <label>Decisions made (one per line)<textarea id="p-dec" maxlength="4000"></textarea></label>
+    <label>Details to remember (one per line)<textarea id="p-det" maxlength="4000"></textarea></label>
+    <label class="check"><input type="checkbox" id="p-drop"> Won't do: hide this project and its tasks</label>
+    <div class="actions">
+      <button class="btn" id="p-show" type="button">Show its tasks</button>
+      <div class="right">
+        <button class="btn" id="p-cancel" type="button">Cancel</button>
+        <button class="btn primary" type="submit">Save · touched today</button>
       </div>
     </div>
   </form>
@@ -138,69 +184,120 @@ textarea { min-height: 110px; resize: vertical; }
 
 <script>
 const COLS = [
-  { id: "now", name: "Now", hint: "Doing this week. Keep it to 3.", limit: 3 },
+  { id: "now", name: "Now", hint: "This week. Keep it to 3.", limit: 3 },
   { id: "next", name: "Next", hint: "Up after Now, roughly in order." },
   { id: "later", name: "Later", hint: "Planned, not yet." },
   { id: "ideas", name: "Ideas", hint: "Parked. No pressure." },
   { id: "done", name: "Done", hint: "Finished." },
 ];
-const PROJECTS = {
-  sortbuddy: "SortBuddy build",
-  software: "Software",
-  storage: "Storage",
-  business: "Business",
-  printing: "3D printing",
-  buddy: "Buddy apps",
-  home: "Home & space",
-};
+const DROPPED = { id: "dropped", name: "Won't do", hint: "Decided not to, or parked for good. Kept so you know you thought of it." };
+const AREAS = [["hardware", "Hardware"], ["apps", "Apps"], ["cards", "Cards"], ["life", "Life"]];
 
 const $ = (id) => document.getElementById(id);
-let db = null, tasks = [], filter = "all", editing = null, dragId = null;
+const store = { get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
+let db = null, tasks = [], projects = {}, filter = store.get("wb-filter", "all"), editing = null, editingProj = null, dragId = null;
+let showDropped = false, projOpen = store.get("wb-proj", "1") === "1";
 
 function toast(msg) {
   const t = document.createElement("div");
   t.className = "toast"; t.textContent = msg; t.setAttribute("role", "status");
   document.body.appendChild(t); setTimeout(() => t.remove(), 3200);
 }
+const lines = (v) => (Array.isArray(v) ? v : []).join("\n");
+const unlines = (s) => s.split("\n").map((x) => x.trim()).filter(Boolean);
+const today = () => new Date().toISOString().slice(0, 10);
+const projDropped = (key) => !!(projects[key] && projects[key].dropped);
+const isHidden = (t) => t.column === "dropped" || projDropped(t.project);
 
-function chip(project) {
-  const s = document.createElement("span");
-  s.className = "chip"; s.style.setProperty("--c", `var(--p-${project in PROJECTS ? project : "buddy"})`);
-  s.textContent = PROJECTS[project] || "Other";
+function chip(key) {
+  const p = projects[key], s = document.createElement("span");
+  s.className = "chip" + (p ? "" : " gray");
+  if (p) s.style.setProperty("--h", p.hue ?? 210);
+  s.textContent = p ? p.name : key || "Other";
   return s;
 }
 
-function renderFilters() {
-  const box = $("filters"); box.replaceChildren();
-  const make = (key, label) => {
-    const b = document.createElement("button");
-    b.type = "button"; b.className = "chip" + (key === "all" ? " all" : "");
-    if (key !== "all") b.style.setProperty("--c", `var(--p-${key})`);
-    b.textContent = label; b.setAttribute("aria-pressed", String(filter === key));
-    b.onclick = () => { filter = key; renderFilters(); renderBoard(); };
-    box.appendChild(b);
+function daysAgo(d) {
+  if (!d) return null;
+  const t = Date.parse(d + "T00:00:00"); if (isNaN(t)) return null;
+  return Math.max(0, Math.round((Date.now() - t) / 864e5));
+}
+
+function sortedProjects(includeDropped) {
+  return Object.values(projects).filter((p) => includeDropped || !p.dropped)
+    .sort((a, b) => (b.lastTouched || "").localeCompare(a.lastTouched || "") || a.name.localeCompare(b.name));
+}
+
+function renderFilter() {
+  const sel = $("filter"), cur = filter;
+  const opts = [new Option("All projects", "all")];
+  for (const p of sortedProjects(showDropped).slice().sort((a, b) => a.name.localeCompare(b.name))) opts.push(new Option(p.name + (p.dropped ? " (won't do)" : ""), p.id));
+  sel.replaceChildren(...opts);
+  sel.value = [...sel.options].some((o) => o.value === cur) ? cur : "all";
+  filter = sel.value;
+  $("f-project").replaceChildren(...Object.values(projects).filter((p) => !p.dropped).sort((a, b) => a.name.localeCompare(b.name)).map((p) => new Option(p.name, p.id)));
+}
+
+function renderProjects() {
+  const box = $("areas"); box.replaceChildren();
+  $("proj-toggle").textContent = projOpen ? "Hide" : "Show";
+  $("proj-toggle").setAttribute("aria-expanded", String(projOpen));
+  if (!projOpen) return;
+  const all = sortedProjects(showDropped);
+  if (!all.length) { const e = document.createElement("p"); e.className = "status"; e.textContent = "No projects yet."; box.appendChild(e); return; }
+  for (const [area, label] of AREAS) {
+    const ps = all.filter((p) => (p.area || "life") === area); if (!ps.length) continue;
+    const sec = document.createElement("div"); sec.className = "area";
+    const h = document.createElement("h3"); h.textContent = label;
+    const grid = document.createElement("div"); grid.className = "projects";
+    for (const p of ps) grid.appendChild(projEl(p));
+    sec.append(h, grid); box.appendChild(sec);
+  }
+}
+
+function projEl(p) {
+  const b = document.createElement("button"); b.type = "button"; b.className = "proj"; b.style.setProperty("--h", p.hue ?? 210);
+  if (p.dropped) b.style.opacity = "0.6";
+  const top = document.createElement("div"); top.className = "top";
+  const n = document.createElement("span"); n.className = "name"; n.textContent = p.name;
+  const w = document.createElement("span"); w.className = "when";
+  const d = daysAgo(p.lastTouched);
+  w.textContent = d === null ? "—" : d === 0 ? "today" : d === 1 ? "yesterday" : d + "d ago";
+  if (d !== null && d > 21) w.classList.add("stale");
+  top.append(n, w); b.appendChild(top);
+  const add = (lbl, text, cls) => {
+    if (!text) return;
+    const l = document.createElement("span"); l.className = "lbl"; l.textContent = lbl;
+    const t = document.createElement("span"); t.className = "txt" + (cls ? " " + cls : ""); t.textContent = text;
+    b.append(l, t);
   };
-  make("all", "All projects");
-  for (const [k, v] of Object.entries(PROJECTS)) make(k, v);
+  add("Left off", p.leftOff);
+  add("Next", p.nextStep, "next");
+  if (Array.isArray(p.blockers) && p.blockers.length) {
+    const wt = document.createElement("span"); wt.className = "wait"; wt.textContent = "Waiting: " + p.blockers.join("; "); b.appendChild(wt);
+  }
+  b.onclick = () => openProject(p);
+  return b;
 }
 
 function sorted(col) {
-  return tasks.filter((t) => t.column === col && (filter === "all" || t.project === filter))
+  return tasks.filter((t) => (col === "dropped" ? isHidden(t) : t.column === col && !isHidden(t)) && (filter === "all" || t.project === filter))
     .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 }
 
 function renderBoard() {
   const board = $("board"); board.replaceChildren();
-  for (const c of COLS) {
+  const cols = showDropped ? [...COLS, DROPPED] : COLS;
+  for (const c of cols) {
     const items = sorted(c.id);
-    const total = tasks.filter((t) => t.column === c.id).length;
+    const total = c.limit ? tasks.filter((t) => t.column === c.id && !isHidden(t)).length : items.length;
     const col = document.createElement("section");
     col.className = "col"; col.dataset.col = c.id; col.setAttribute("aria-label", c.name);
     const head = document.createElement("div"); head.className = "col-head";
     const h = document.createElement("h2"); h.textContent = c.name;
     const n = document.createElement("span");
     n.className = "count" + (c.limit && total > c.limit ? " over" : "");
-    n.textContent = c.limit ? `${total} / ${c.limit}` : String(total);
+    n.textContent = c.limit ? `${total} / ${c.limit}` : String(items.length);
     if (c.limit && total > c.limit) n.title = "More than " + c.limit + ": move something back to Next";
     head.append(h, n);
     const hint = document.createElement("p"); hint.className = "hint"; hint.textContent = c.hint;
@@ -217,6 +314,8 @@ function renderBoard() {
     col.addEventListener("drop", (e) => { e.preventDefault(); col.classList.remove("over"); if (dragId) moveTo(dragId, c.id, null); });
     board.appendChild(col);
   }
+  const hiddenCount = tasks.filter(isHidden).length;
+  $("dropped-toggle").textContent = showDropped ? "Hide won't-do" : `Show won't-do (${hiddenCount})`;
 }
 
 function taskEl(t) {
@@ -261,32 +360,56 @@ async function write(fn, okMsg) {
   }
 }
 
+function touch(key) {
+  const p = projects[key]; if (!p || p.lastTouched === today()) return;
+  p.lastTouched = today();
+  write(() => db.doc("projects/" + key).update({ lastTouched: p.lastTouched }));
+}
+
 function moveTo(id, col, beforeId) {
   const t = tasks.find((x) => x.id === id); if (!t) return;
   const patch = { column: col, order: orderFor(col, beforeId, id) };
   if (col === "done" && t.column !== "done") patch.doneAt = Date.now();
   Object.assign(t, patch); renderBoard();
   write(() => db.doc("tasks/" + id).update(patch));
-}
-
-function fillSelects() {
-  $("f-project").replaceChildren(...Object.entries(PROJECTS).map(([k, v]) => new Option(v, k)));
-  $("f-col").replaceChildren(...COLS.map((c) => new Option(c.name, c.id)));
+  if (col !== t.column || col === "done") touch(t.project);
 }
 
 function openDialog(t) {
   editing = t || null;
   $("dlg-title").textContent = t ? "Edit task" : "Add task";
+  $("f-col").replaceChildren(...[...COLS, DROPPED].map((c) => new Option(c.name, c.id)));
   $("f-title").value = t ? t.title : "";
-  $("f-project").value = t ? (t.project in PROJECTS ? t.project : "buddy") : (filter !== "all" ? filter : "sortbuddy");
+  const fallback = filter !== "all" && projects[filter] && !projects[filter].dropped ? filter : (projects.sortbuddy ? "sortbuddy" : Object.keys(projects)[0] || "");
+  if (t && projects[t.project] && projDropped(t.project)) $("f-project").append(new Option(projects[t.project].name, t.project));
+  $("f-project").value = t ? t.project : fallback;
   $("f-col").value = t ? t.column : "ideas";
   $("f-notes").value = t ? (t.notes || "") : "";
   const del = $("f-delete"); del.hidden = !t; del.classList.remove("armed"); del.textContent = "Delete";
   $("dlg").showModal(); $("f-title").focus();
 }
 
+function openProject(p) {
+  editingProj = p;
+  $("p-name").textContent = p.name; $("p-name").style.color = `hsl(${p.hue ?? 210} var(--chip-s) var(--chip-l))`;
+  $("p-what").textContent = p.what || "";
+  $("p-status").value = p.status || "";
+  $("p-left").value = p.leftOff || "";
+  $("p-next").value = p.nextStep || "";
+  $("p-wait").value = lines(p.blockers);
+  $("p-dec").value = lines(p.decisions);
+  $("p-det").value = lines(p.details);
+  $("p-drop").checked = !!p.dropped;
+  $("pdlg").showModal();
+}
+
+$("filter").onchange = (e) => { filter = e.target.value; store.set("wb-filter", filter); renderBoard(); };
+$("proj-toggle").onclick = () => { projOpen = !projOpen; store.set("wb-proj", projOpen ? "1" : "0"); renderProjects(); };
+$("dropped-toggle").onclick = () => { showDropped = !showDropped; renderFilter(); renderProjects(); renderBoard(); };
 $("add-btn").onclick = () => openDialog(null);
 $("f-cancel").onclick = () => $("dlg").close();
+$("p-cancel").onclick = () => $("pdlg").close();
+$("p-show").onclick = () => { $("pdlg").close(); filter = editingProj.id; store.set("wb-filter", filter); if (editingProj.dropped) showDropped = true; renderFilter(); renderBoard(); $("board").scrollIntoView({ behavior: "smooth" }); };
 $("f-delete").onclick = async () => {
   const del = $("f-delete");
   if (!del.classList.contains("armed")) { del.classList.add("armed"); del.textContent = "Tap again to delete"; return; }
@@ -308,20 +431,37 @@ $("form").addEventListener("submit", async (e) => {
     await write(() => db.doc("tasks/" + id).update(body), "Saved");
   } else {
     body.order = orderFor(body.column, null, null); body.created = Date.now();
-    await write(() => db.collection("tasks").add(body), "Added to " + COLS.find((c) => c.id === body.column).name);
+    const col = [...COLS, DROPPED].find((c) => c.id === body.column);
+    await write(() => db.collection("tasks").add(body), "Added to " + col.name);
   }
+  touch(body.project);
+});
+$("pform").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const p = editingProj, key = p.id;
+  const body = { status: $("p-status").value.trim(), leftOff: $("p-left").value.trim(), nextStep: $("p-next").value.trim(),
+    blockers: unlines($("p-wait").value), decisions: unlines($("p-dec").value), details: unlines($("p-det").value),
+    dropped: $("p-drop").checked, lastTouched: today() };
+  $("pdlg").close();
+  Object.assign(p, body); renderFilter(); renderProjects(); renderBoard();
+  await write(() => db.doc("projects/" + key).update(body), "Saved");
 });
 
-fillSelects(); renderFilters(); renderBoard();
+renderFilter(); renderProjects(); renderBoard();
 
 (async () => {
   db = window.claude ? await window.claude.use("db") : null;
-  if (!db) { $("status").textContent = "Your tasks can't load in this view. Open the board from claude.ai while signed in."; $("add-btn").disabled = true; return; }
+  if (!db) { $("status").textContent = "Your board can't load in this view. Open it from claude.ai while signed in."; $("add-btn").disabled = true; return; }
+  const fail = () => { $("status").hidden = false; $("status").textContent = "Lost the connection to your board. Reload the page."; };
+  db.collection("projects").onSnapshot((snap) => {
+    projects = Object.fromEntries(snap.docs.map((d) => [d.id, { id: d.id, ...d.data() }]));
+    renderFilter(); renderProjects(); renderBoard();
+  }, fail);
   db.collection("tasks").onSnapshot((snap) => {
     tasks = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     $("status").textContent = tasks.length ? "" : "No tasks yet. Use “+ Add task” to start.";
     $("status").hidden = !!tasks.length;
     renderBoard();
-  }, () => { $("status").hidden = false; $("status").textContent = "Lost the connection to your board. Reload the page."; });
+  }, fail);
 })();
 </script>
