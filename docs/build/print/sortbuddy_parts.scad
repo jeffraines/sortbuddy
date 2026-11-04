@@ -1,7 +1,7 @@
 // SortBuddy: 3D-printed parts that replace the foam ones where precision matters.
 //
 //   openscad -D 'part="wheel"' -o wheel.stl sortbuddy_parts.scad
-//   parts: wheel, wheel_big, bracket, throat, flap, hopper
+//   parts: wheel, wheel_big, bracket, throat, flap, hopper, hopper_light
 //
 // All in mm. Letters match foam-template.pdf (W wheel, Q bracket, T strip, G flap,
 // hopper = P1-P5 in one piece).
@@ -136,15 +136,18 @@ module flap() {
 // throat, and a little sag there doesn't matter because strip T sets the gap.
 // Underneath: two 2.5 mm pilot holes for M3 screws through the bracket's
 // flange (or just glue the flange there).
-module hopper() {
-    L = 126; CHW = 70; wall = 5; floor_t = 5; Hh = 60;
+module hopper(wall = 5) {
+    // Inner faces stay where the template puts them (stack 5-101, channel 0-70)
+    // whatever the wall thickness, so the wheel and bracket still line up.
+    L = 126; CHW = 70; floor_t = 5; Hh = 60;
     gap = 3;                       // front wall's bottom above the floor top
-    front = 101;
+    back = 5; front = 101;         // inner faces of the back and front walls
+    x0 = back - wall;
     difference() {
         union() {
-            cube([L, CHW, floor_t]);                                       // floor + lip
-            for (y = [-wall, CHW]) translate([0, y, 0]) cube([front + wall, wall, Hh]);   // sides
-            translate([0, 0, 0]) cube([wall, CHW, Hh]);                    // back wall
+            translate([x0, 0, 0]) cube([L - x0, CHW, floor_t]);             // floor + lip
+            for (y = [-wall, CHW]) translate([x0, y, 0]) cube([front + wall - x0, wall, Hh]);  // sides
+            translate([x0, 0, 0]) cube([wall, CHW, Hh]);                     // back wall
             translate([front, 0, floor_t + gap]) cube([wall, CHW, Hh - floor_t - gap]);  // front wall
         }
         translate([49, 28, -1]) cube([36, 14, floor_t + 2]);              // wheel slot
@@ -166,3 +169,4 @@ else if (part == "bracket") bracket();
 else if (part == "throat") throat();
 else if (part == "flap") flap();
 else if (part == "hopper") hopper();
+else if (part == "hopper_light") hopper(2.4);   // thin walls: less plastic, same inside
