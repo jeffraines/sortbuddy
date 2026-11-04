@@ -1,10 +1,11 @@
 // SortBuddy: 3D-printed parts that replace the foam ones where precision matters.
 //
 //   openscad -D 'part="wheel"' -o wheel.stl sortbuddy_parts.scad
-//   parts: wheel, wheel_big, bracket, throat, flap, hopper, hopper_light
+//   parts: wheel, wheel_big, bracket, throat, flap, hopper, hopper_light,
+//          slide, weight
 //
 // All in mm. Letters match foam-template.pdf (W wheel, Q bracket, T strip, G flap,
-// hopper = P1-P5 in one piece).
+// hopper = P1-P5 in one piece, slide = A + B, weight = S).
 // PLA, 0.2 mm layers, 3 walls, 30% infill. Print every part flat as exported,
 // no supports.
 
@@ -163,6 +164,48 @@ module hopper(wall = 5) {
     }
 }
 
+// ---------------------------------------------------------------- A + B: slide in one piece
+// Floor 0-175 along the travel direction; walls end at 160 so the last 15 mm
+// of floor slides between upper-hood panels C1 and C2 onto the acrylic.
+// Walls are 5 mm like the foam, so they stay flush with panels C for
+// joiners J. The floor is only 2 mm (the foam's 5 mm was just board
+// thickness), so the step down onto the window is small, and its far end is
+// bevelled to a thin edge. Print floor down; the top of the floor is the card
+// path, so turn on ironing (top surfaces) if your slicer has it.
+module slide() {
+    L = 175; CHW = 70; wall = 5; floor_t = 2; Hw = 30; wall_end = 160;
+    bevel = 10;
+    difference() {
+        union() {
+            cube([L, CHW, floor_t]);
+            for (y = [-wall, CHW]) translate([0, y, 0]) cube([wall_end, wall, Hw]);
+        }
+        // bevel the top of the floor's far end down to 0.6 mm
+        translate([L - bevel, -1, floor_t]) rotate([0, atan((floor_t - 0.6) / bevel), 0])
+            cube([bevel + 5, CHW + 2, 5]);
+        // lead-in chamfers on the inside top edges of the walls at the hopper end
+        for (y = [0, CHW]) translate([-1, y, Hw]) rotate([45, 0, 0]) cube([12, 2, 2], center = true);
+    }
+}
+
+// ---------------------------------------------------------------- S: stack weight
+// Sits on the top card. Fill the tray with coins, nuts or washers until it
+// weighs 30-50 g in total. Flat side (bed side) goes down on the cards.
+module weight() {
+    L = 86; W = 62; t = 2; rim = 6;
+    difference() {
+        union() {
+            cube([L, W, t]);
+            translate([0, 0, t]) difference() {
+                cube([L, W, rim]);
+                translate([2, 2, -1]) cube([L - 4, W - 4, rim + 2]);
+            }
+            translate([L / 2 - 8, W / 2 - 2, t]) cube([16, 4, rim + 6]);   // lift handle
+        }
+        translate([L / 2 - 5, W / 2 - 3, t + rim]) cube([10, 6, 3.5]);     // finger hole in the handle
+    }
+}
+
 if (part == "wheel") wheel(40);
 else if (part == "wheel_big") wheel(42);
 else if (part == "bracket") bracket();
@@ -170,3 +213,5 @@ else if (part == "throat") throat();
 else if (part == "flap") flap();
 else if (part == "hopper") hopper();
 else if (part == "hopper_light") hopper(2.4);   // thin walls: less plastic, same inside
+else if (part == "slide") slide();
+else if (part == "weight") weight();
