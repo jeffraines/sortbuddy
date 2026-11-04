@@ -1,9 +1,10 @@
 // SortBuddy: 3D-printed parts that replace the foam ones where precision matters.
 //
 //   openscad -D 'part="wheel"' -o wheel.stl sortbuddy_parts.scad
-//   parts: wheel, wheel_big, bracket, throat, flap
+//   parts: wheel, wheel_big, bracket, throat, flap, hopper
 //
-// All in mm. Letters match foam-template.pdf (W wheel, Q bracket, T strip, G flap).
+// All in mm. Letters match foam-template.pdf (W wheel, Q bracket, T strip, G flap,
+// hopper = P1-P5 in one piece).
 // PLA, 0.2 mm layers, 3 walls, 30% infill. Print every part flat as exported,
 // no supports.
 
@@ -127,8 +128,41 @@ module flap() {
     }
 }
 
+// ---------------------------------------------------------------- P1-P5: hopper in one piece
+// Same layout as the foam hopper (x = along the travel direction): back wall
+// 0-5, stack 5-101, front wall 101-106, lip 106-126. Floor 5 thick so the
+// printed bracket and wheel sit exactly as on the template. Print standing on
+// its floor, no supports: the only overhang is the 70 mm bridge over the
+// throat, and a little sag there doesn't matter because strip T sets the gap.
+// Underneath: two 2.5 mm pilot holes for M3 screws through the bracket's
+// flange (or just glue the flange there).
+module hopper() {
+    L = 126; CHW = 70; wall = 5; floor_t = 5; Hh = 60;
+    gap = 3;                       // front wall's bottom above the floor top
+    front = 101;
+    difference() {
+        union() {
+            cube([L, CHW, floor_t]);                                       // floor + lip
+            for (y = [-wall, CHW]) translate([0, y, 0]) cube([front + wall, wall, Hh]);   // sides
+            translate([0, 0, 0]) cube([wall, CHW, Hh]);                    // back wall
+            translate([front, 0, floor_t + gap]) cube([wall, CHW, Hh - floor_t - gap]);  // front wall
+        }
+        translate([49, 28, -1]) cube([36, 14, floor_t + 2]);              // wheel slot
+        for (y = [17, 53])                                                 // slots for strip T screws
+            translate([front - 1, y, 0]) hull()
+                for (z = [floor_t + gap + 19 + 1.75, floor_t + gap + 33 - 1.75])
+                    translate([0, 0, z]) rotate([0, 90, 0]) cylinder(d = 3.5, h = wall + 2, $fn = 24);
+        for (x = [35, 85]) translate([x, 50.5, -1]) cylinder(d = 2.5, h = 4 + 1, $fn = 24);  // bracket screws
+        for (y = [-wall - 1, CHW - 1])                                     // finger notches to grab the stack
+            translate([53, y, Hh]) rotate([-90, 0, 0]) cylinder(r = 15, h = wall + 2);
+        // bracket position mark on the underside: a shallow groove along the slot-side face line
+        translate([20, 42 - 0.3, -0.01]) cube([80, 0.6, 0.4]);
+    }
+}
+
 if (part == "wheel") wheel(40);
 else if (part == "wheel_big") wheel(42);
 else if (part == "bracket") bracket();
 else if (part == "throat") throat();
 else if (part == "flap") flap();
+else if (part == "hopper") hopper();
