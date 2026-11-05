@@ -2,7 +2,7 @@
 //
 //   openscad -D 'part="wheel"' -o wheel.stl sortbuddy_parts.scad
 //   parts: wheel, wheel_big, bracket, throat, flap, hopper, hopper_light,
-//          slide, weight, servo_mount, camera_mount
+//          slide, weight, servo_mount, camera_mount, lower_hood
 //
 // All in mm. Letters match foam-template.pdf (W wheel, Q bracket, T strip, G flap,
 // hopper = P1-P5 in one piece, slide = A + B, weight = S).
@@ -268,6 +268,48 @@ module camera_mount() {
     }
 }
 
+// ---------------------------------------------------------------- lower hood (D1 + D2 + F, H splices) in one piece
+// x = along the channel, 0 = slide end, the acrylic window spans x 0-130 and
+// y -5..75 (80 x 130 x 2 mm, as on the template). Prints standing on its
+// floor, no supports: the ledge under the window is a 45 degree chamfer.
+//   * the acrylic drops into the top between two side rims, flush with them,
+//     and rests on a 4 mm ledge all round. Nothing above it at the gate end,
+//     so cards leave over a clean edge; a 1 mm stop at the slide end.
+//   * upper hood panels C sit on the acrylic's side edges, right above
+//     the rims, as before.
+//   * camera_mount stands upside down (walls down) in the recess on the
+//     floor: lens 130 mm below the window, centred where the card stops
+//     (x 67), connector toward the slide end, cable out of the hole there.
+//   * notches on the rim tops: x 15 (slide floor ends), 67 (camera), 115 (gate).
+//   * closed on all sides, unlike the foam: no room light from below.
+// Print it in a light colour (white / light grey): a dark inside gives dark
+// corners and harsher glare.
+ACRYLIC_T = 2;
+module lower_hood() {
+    wall = 2; cl = 0.3; ledge = 4; fl = 3;
+    y0 = -5 - cl; y1 = 75 + cl;             // acrylic edges + clearance
+    zb = fl + 9 + 130;                       // acrylic underside (mount is ~9 tall)
+    difference() {
+        union() {
+            translate([-wall, y0 - wall, 0]) cube([130 + wall, y1 - y0 + 2 * wall, zb]);
+            for (y = [y0 - wall, y1]) translate([-wall, y, zb]) cube([130 + wall, wall, ACRYLIC_T]);  // side rims
+            translate([-wall, y0 - wall, zb]) cube([wall, y1 - y0 + 2 * wall, 1]);                    // slide-end stop
+        }
+        // inside, with the chamfered ledge under the window
+        hull() {
+            translate([0, y0, fl]) cube([128, y1 - y0, zb - ledge - fl]);
+            translate([ledge - 1, y0 + ledge, zb - 0.01]) cube([128 - 2 * ledge + 2, y1 - y0 - 2 * ledge, 0.02]);
+        }
+        translate([0, y0, zb]) cube([140, y1 - y0, 10]);                                           // acrylic pocket
+        translate([-wall - 1, 30, fl]) cube([wall + 2, 10, 8]);                                     // cable hole
+        // camera_mount locator: its wall outline (29.2 x 13.7) + clearance, lens at (67, 35)
+        translate([67 - 23.6 - cl, 35 - 6.85 - cl, fl - 0.8]) cube([29.2 + 2 * cl, 13.7 + 2 * cl, 1]);
+        // alignment notches on the rim tops
+        for (x = [15, 67, 115], y = [y0 - wall, y1 + wall])
+            translate([x, y, zb + ACRYLIC_T]) rotate([0, 45, 0]) cube([1.6, 2 * wall + 2, 1.6], center = true);
+    }
+}
+
 if (part == "wheel") wheel(40);
 else if (part == "wheel_big") wheel(42);
 else if (part == "bracket") bracket();
@@ -279,3 +321,4 @@ else if (part == "slide") slide();
 else if (part == "weight") weight();
 else if (part == "servo_mount") servo_mount();
 else if (part == "camera_mount") camera_mount();
+else if (part == "lower_hood") lower_hood();
