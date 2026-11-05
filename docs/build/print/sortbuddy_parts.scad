@@ -2,7 +2,7 @@
 //
 //   openscad -D 'part="wheel"' -o wheel.stl sortbuddy_parts.scad
 //   parts: wheel, wheel_big, bracket, throat, flap, hopper, hopper_light,
-//          slide, weight, servo_mount
+//          slide, weight, servo_mount, camera_mount
 //
 // All in mm. Letters match foam-template.pdf (W wheel, Q bracket, T strip, G flap,
 // hopper = P1-P5 in one piece, slide = A + B, weight = S).
@@ -225,6 +225,49 @@ module servo_mount() {
     for (s = [-1, 1]) translate([-L / 2, s > 0 ? W / 2 - 1.2 : -W / 2, t]) cube([L, 1.2, 2]);
 }
 
+// ---------------------------------------------------------------- camera mount (E top, F bottom)
+// For the 26 x 10.5 mm USB camera boards (HX3807, square M5 lens holder at
+// one end, no mounting holes). The camera is held by its lens holder: it sits
+// in a square pocket and its front rests on a thin lip, so the lens is
+// centred on the plate's centre notches and square to it. The board itself
+// floats just behind the plate inside low walls; a dab of hot glue on the
+// walls (never on the lens) holds it. Open end of the walls = cable side.
+// Dimensions read off the listing photos: if the holder doesn't go in, or
+// rattles a lot, change CAM_HOLDER.
+//   top camera (E): plate's flat front face down on E, lens over E's hole
+//   bottom camera (F): flip it over, walls stand on F, lens looks up
+CAM_HOLDER = [9.2, 9.6];   // lens-holder pocket (holder ~8.3 along the board x ~9 across) + clearance
+module camera_mount() {
+    t = 3; lip = 0.8; lens_hole = 7.4;
+    board = [26, 10.5];
+    to_far = 4.0;              // lens centre to the board's far (lens) end
+    to_conn = board[0] - to_far;
+    cl = 0.4; wt = 1.2; wh = 6;
+    x0 = -to_conn - cl - wt - 3; x1 = to_far + cl + wt + 3;
+    yh = board[1] / 2 + cl + wt + 3;
+    difference() {
+        union() {
+            translate([x0, -yh, 0]) cube([x1 - x0, 2 * yh, t]);
+            // walls round the board outline, open at the connector end
+            translate([0, 0, t]) difference() {
+                translate([-to_conn - cl - wt, -board[1] / 2 - cl - wt, 0])
+                    cube([board[0] + 2 * cl + 2 * wt, board[1] + 2 * cl + 2 * wt, wh]);
+                translate([-to_conn - cl, -board[1] / 2 - cl, -1])
+                    cube([board[0] + 2 * cl, board[1] + 2 * cl, wh + 2]);
+                translate([-to_conn - cl - wt - 1, -board[1] / 2 - cl, -1])
+                    cube([wt + 2, board[1] + 2 * cl, wh + 2]);           // cable exit
+            }
+        }
+        translate([-CAM_HOLDER[0] / 2, -CAM_HOLDER[1] / 2, lip]) cube([CAM_HOLDER[0], CAM_HOLDER[1], t]);
+        translate([0, 0, -1]) cylinder(d = lens_hole, h = t + 2);
+        // window for the connector (it sits on the lens side of the board)
+        translate([-to_conn - cl, -board[1] / 2 - cl, -1]) cube([8, board[1] + 2 * cl, t + 2]);
+        // centre notches on all four edges: line them up with the + on plate E / F
+        for (p = [[x0, 0], [x1, 0], [0, -yh], [0, yh]])
+            translate([p[0], p[1], -1]) rotate([0, 0, 45]) cube([2, 2, t + 2], center = true);
+    }
+}
+
 if (part == "wheel") wheel(40);
 else if (part == "wheel_big") wheel(42);
 else if (part == "bracket") bracket();
@@ -235,3 +278,4 @@ else if (part == "hopper_light") hopper(2.4);   // thin walls: less plastic, sam
 else if (part == "slide") slide();
 else if (part == "weight") weight();
 else if (part == "servo_mount") servo_mount();
+else if (part == "camera_mount") camera_mount();
