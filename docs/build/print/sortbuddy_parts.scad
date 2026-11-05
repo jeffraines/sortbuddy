@@ -2,7 +2,8 @@
 //
 //   openscad -D 'part="wheel"' -o wheel.stl sortbuddy_parts.scad
 //   parts: wheel, wheel_big, bracket, throat, flap, hopper, hopper_light,
-//          slide, weight, servo_mount, camera_mount, lower_hood
+//          slide, weight, servo_mount, camera_mount, lower_hood,
+//          led_channel, led_channel_short
 //
 // All in mm. Letters match foam-template.pdf (W wheel, Q bracket, T strip, G flap,
 // hopper = P1-P5 in one piece, slide = A + B, weight = S).
@@ -310,6 +311,25 @@ module lower_hood() {
     }
 }
 
+// ---------------------------------------------------------------- LED diffuser channel
+// For an 8 mm LED strip. The strip sticks to the channel's floor; a strip of
+// printer paper (10 mm wide) slides into the grooves near the top from one
+// end, about 5 mm in front of the LEDs, so they glow evenly instead of
+// showing bright dots. Flat back: hot glue or double-sided tape onto the foam.
+// Ends are open for the wires. led_channel(120) for the long hood walls,
+// led_channel(60) for short runs.
+LED_STRIP_W = 8;
+module led_channel(len = 120) {
+    w = LED_STRIP_W + 0.6; fl = 1.2; wt = 1.6; h = 8.5;
+    groove_z = fl + 7; gd = 0.8; gh = 0.7;
+    difference() {
+        cube([len, w + 2 * wt, h]);
+        translate([-1, wt, fl]) cube([len + 2, w, h]);
+        for (y = [wt - gd, wt + w - 0.01])                       // paper grooves
+            translate([-1, y, groove_z]) cube([len + 2, gd + 0.01, gh]);
+    }
+}
+
 if (part == "wheel") wheel(40);
 else if (part == "wheel_big") wheel(42);
 else if (part == "bracket") bracket();
@@ -322,3 +342,5 @@ else if (part == "weight") weight();
 else if (part == "servo_mount") servo_mount();
 else if (part == "camera_mount") camera_mount();
 else if (part == "lower_hood") lower_hood();
+else if (part == "led_channel") led_channel(120);
+else if (part == "led_channel_short") led_channel(60);
