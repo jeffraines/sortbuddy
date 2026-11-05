@@ -2,7 +2,7 @@
 //
 //   openscad -D 'part="wheel"' -o wheel.stl sortbuddy_parts.scad
 //   parts: wheel, wheel_big, bracket, throat, flap, hopper, hopper_light,
-//          slide, weight
+//          slide, weight, servo_mount
 //
 // All in mm. Letters match foam-template.pdf (W wheel, Q bracket, T strip, G flap,
 // hopper = P1-P5 in one piece, slide = A + B, weight = S).
@@ -206,6 +206,25 @@ module weight() {
     }
 }
 
+// ---------------------------------------------------------------- servo mount (C1 gate, N sorter)
+// MG90S: body 22.8 x 12.2, ears 32.3 long with screw holes 27.8 apart.
+// Glue the plate on the OUTSIDE of panel C1, its hole over C1's servo cutout
+// (enlarge the foam cutout a little if needed). Drop the servo in from
+// outside, ears on the plate, and fix it with the screws that came with it.
+// Print 3: one for the gate, two for the sorter flap later (replaces N).
+module servo_mount() {
+    L = 46; W = 24; t = 3;
+    body = [23.2, 12.6];           // MG90S body + clearance
+    ear_pitch = 27.8;
+    difference() {
+        translate([-L / 2, -W / 2, 0]) cube([L, W, t]);
+        translate([-body[0] / 2, -body[1] / 2, -1]) cube([body[0], body[1], t + 2]);
+        for (s = [-1, 1]) translate([s * ear_pitch / 2, 0, -1]) cylinder(d = 1.8, h = t + 2, $fn = 24);
+    }
+    // two stiffening ribs on the servo side; the flat bed side is the one glued to the foam
+    for (s = [-1, 1]) translate([-L / 2, s > 0 ? W / 2 - 1.2 : -W / 2, t]) cube([L, 1.2, 2]);
+}
+
 if (part == "wheel") wheel(40);
 else if (part == "wheel_big") wheel(42);
 else if (part == "bracket") bracket();
@@ -215,3 +234,4 @@ else if (part == "hopper") hopper();
 else if (part == "hopper_light") hopper(2.4);   // thin walls: less plastic, same inside
 else if (part == "slide") slide();
 else if (part == "weight") weight();
+else if (part == "servo_mount") servo_mount();
