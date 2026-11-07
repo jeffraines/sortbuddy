@@ -1,7 +1,7 @@
 // SortBuddy: 3D-printed parts that replace the foam ones where precision matters.
 //
 //   openscad -D 'part="wheel"' -o wheel.stl sortbuddy_parts.scad
-//   parts: wheel, wheel_big, bracket, throat, flap, hopper, hopper_light,
+//   parts: wheel, wheel_big, wheel_spaced, bracket, throat, flap, hopper, hopper_light,
 //          slide, weight, servo_mount, camera_mount, lower_hood,
 //          led_channel, led_channel_short, splice, joiner, joints (4 H + 2 J),
 //          plate_E, plate_F, panel_D
@@ -408,8 +408,24 @@ module panel_D() {
     }
 }
 
+// ---------------------------------------------------------------- W, spaced: clears the motor's ear screws
+// The ear screw heads sit inside the wheel's radius, so a wheel pushed all
+// the way on rubs them. This one has a 3 mm hub on the back: push it all the
+// way on and it stops 3 mm off the motor, clear of the heads, with the
+// shaft's flats still well inside the keyed part of the bore. It still sits
+// inside the floor slot. Print outer face down (as exported), hub up.
+module wheel_spaced(d = 40, spacer = 3) {
+    w = 8;
+    wheel(d, w);
+    translate([0, 0, w]) difference() {
+        cylinder(d = 10, h = spacer);
+        translate([0, 0, -1]) cylinder(d = SHAFT_D + 2 * fit, h = spacer + 2);
+    }
+}
+
 if (part == "wheel") wheel(40);
 else if (part == "wheel_big") wheel(42);
+else if (part == "wheel_spaced") wheel_spaced(40);
 else if (part == "bracket") bracket();
 else if (part == "throat") throat();
 else if (part == "flap") flap();
