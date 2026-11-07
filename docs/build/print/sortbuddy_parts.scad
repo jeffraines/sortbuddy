@@ -1,7 +1,8 @@
 // SortBuddy: 3D-printed parts that replace the foam ones where precision matters.
 //
 //   openscad -D 'part="wheel"' -o wheel.stl sortbuddy_parts.scad
-//   parts: slide_takeaway_lite, slide_takeaway, takeaway_bracket, takeaway_rollers, takeaway_axle, hopper_frame, wheel, wheel_big, wheel_spaced, wheel_lite, bracket_lite, bracket, throat, flap, hopper, hopper_light,
+//   parts: belt_wheel_feed, belt_wheel_takeaway, belt_spacer, belt_axle, belt_frame,
+//          slide_takeaway_lite, slide_takeaway, takeaway_bracket, takeaway_rollers, takeaway_axle, hopper_frame, wheel, wheel_big, wheel_spaced, wheel_lite, bracket_lite, bracket, throat, flap, hopper, hopper_light,
 //          slide, weight, servo_mount, camera_mount, lower_hood,
 //          led_channel, led_channel_short, splice, joiner, joints (4 H + 2 J),
 //          plate_E, plate_F, panel_D
@@ -589,6 +590,59 @@ module slide_takeaway_lite() {
     }
 }
 
+// ---------------------------------------------------------------- belt-driven take-away (one motor)
+// The take-away wheel on the slide is driven from the feed motor by a rubber
+// band: both wheels carry the same pulley, so they turn at the same speed.
+//   belt_wheel(keyed = true): feed wheel. The motor-side face prints on the
+//     bed; the pulley sits on top (the outer side, toward the slot's far
+//     edge). Keys at the motor end, where the shaft's flats are.
+//   belt_spacer: 3 mm ring on the shaft first, so the wheel clears the
+//     ear screws (it used to be a hub on the wheel).
+//   belt_wheel(keyed = false): the take-away wheel, free on belt_axle.
+//   belt_frame: holds belt_axle under the slide (glue its top edges to the
+//     underside of the slide floor, axle under the wheel slot).
+// Belt: one rubber band ~190-200 mm round when slack (stretched to ~230 mm
+// on the pulleys), e.g. a large rubber band about 95 mm long folded flat.
+BELT_R = 11;                          // pulley groove radius (both pulleys)
+module belt_wheel(keyed = true, d = 40) {
+    w = 8; recess = 1.4; flange = 1.2; pw = 6;
+    difference() {
+        union() {
+            cylinder(d = d, h = flange);
+            translate([0, 0, flange]) cylinder(d = d - 2 * recess, h = w - 2 * flange);
+            translate([0, 0, w - flange]) cylinder(d = d, h = flange);
+            translate([0, 0, w]) {                                            // pulley
+                cylinder(r = BELT_R + 2, h = 1.2);
+                translate([0, 0, 1.2]) cylinder(r = BELT_R, h = pw - 2.4);
+                translate([0, 0, pw - 1.2]) cylinder(r = BELT_R + 2, h = 1.2);
+            }
+        }
+        translate([0, 0, -1]) cylinder(d = keyed ? SHAFT_D + 2 * fit : 5.6, h = w + pw + 2);
+    }
+    if (keyed) intersection() {                                               // flats, motor end
+        cylinder(d = SHAFT_D + 2 * fit, h = FLAT_LEN);
+        for (s = [-1, 1]) translate([s * (SHAFT_FLATS / 2 + fit + 5), 0, FLAT_LEN / 2]) cube([10, 10, FLAT_LEN], center = true);
+    }
+}
+module belt_spacer() { difference() { cylinder(d = 10, h = 3); translate([0, 0, -1]) cylinder(d = SHAFT_D + 2 * fit, h = 5); } }
+module belt_axle() {                  // octagon, flat face down
+    translate([0, 0, 5 / 2 * cos(22.5)]) rotate([0, 90, 0]) rotate([0, 0, 22.5]) cylinder(d = 5, h = 25, $fn = 8);
+}
+// Frame coordinates = slide coordinates (x along the slide, axle at TA_X,
+// 17 mm under the floor's underside), printed standing as drawn upside down.
+module belt_frame_installed() {
+    t = 2.4; x0 = TA_X - 26; x1 = TA_X + 26; zb = -24;
+    difference() {
+        union() {
+            for (y = [19, 38]) translate([x0, y, zb]) cube([x1 - x0, t, -zb]);       // cheeks
+            translate([x0, 19, -20]) cube([t, 38 + t - 19, 12]);                       // crossbar between the belt strands
+            translate([x1 - t, 19, zb]) cube([t, 38 + t - 19, -zb]);                  // far crossbar
+        }
+        translate([TA_X, 17, -17]) rotate([-90, 0, 0]) cylinder(d = 5.6, h = 25, $fn = 24);   // axle holes
+    }
+}
+module belt_frame() { rotate([180, 0, 0]) belt_frame_installed(); }   // top edges down on the bed
+
 if (part == "wheel") wheel(40);
 else if (part == "wheel_big") wheel(42);
 else if (part == "wheel_spaced") wheel_spaced(40);
@@ -606,6 +660,11 @@ else if (part == "slide_takeaway_lite") slide_takeaway_lite();
 else if (part == "takeaway_bracket") takeaway_bracket();
 else if (part == "takeaway_roller") takeaway_roller();
 else if (part == "takeaway_rollers") takeaway_rollers();
+else if (part == "belt_wheel_feed") belt_wheel(true);
+else if (part == "belt_wheel_takeaway") belt_wheel(false);
+else if (part == "belt_spacer") belt_spacer();
+else if (part == "belt_axle") belt_axle();
+else if (part == "belt_frame") belt_frame();
 else if (part == "takeaway_axle") takeaway_axle();
 else if (part == "weight") weight();
 else if (part == "servo_mount") servo_mount();
