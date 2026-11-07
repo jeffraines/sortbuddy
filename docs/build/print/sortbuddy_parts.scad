@@ -1,7 +1,7 @@
 // SortBuddy: 3D-printed parts that replace the foam ones where precision matters.
 //
 //   openscad -D 'part="wheel"' -o wheel.stl sortbuddy_parts.scad
-//   parts: slide_takeaway_lite, slide_takeaway, takeaway_bracket, takeaway_roller, takeaway_axle, hopper_frame, wheel, wheel_big, wheel_spaced, wheel_lite, bracket_lite, bracket, throat, flap, hopper, hopper_light,
+//   parts: slide_takeaway_lite, slide_takeaway, takeaway_bracket, takeaway_rollers, takeaway_axle, hopper_frame, wheel, wheel_big, wheel_spaced, wheel_lite, bracket_lite, bracket, throat, flap, hopper, hopper_light,
 //          slide, weight, servo_mount, camera_mount, lower_hood,
 //          led_channel, led_channel_short, splice, joiner, joints (4 H + 2 J),
 //          plate_E, plate_F, panel_D
@@ -547,9 +547,12 @@ module slide_takeaway() {
     }
 }
 module takeaway_bracket() { bracket_lite(25, 2); }
-module takeaway_roller() {                       // prints standing
-    difference() { cylinder(d = 16, h = 64); translate([0, 0, -1]) cylinder(d = 5, h = 66); }
+module takeaway_roller(h = 64) {                 // prints standing
+    difference() { cylinder(d = 16, h = h); translate([0, 0, -1]) cylinder(d = 5, h = h + 2); }
 }
+// The 64 mm roller as three 21 mm pieces: a tall thin tube wobbles on a
+// bed-slinger and gets knocked off. All three go on the axle side by side.
+module takeaway_rollers() { for (i = [0 : 2]) translate([i * 22, 0, 0]) takeaway_roller(21); }
 module takeaway_axle() {                         // prints lying flat; octagon, a flat face down
     len = 92;
     difference() {
@@ -602,6 +605,7 @@ else if (part == "slide_takeaway") slide_takeaway();
 else if (part == "slide_takeaway_lite") slide_takeaway_lite();
 else if (part == "takeaway_bracket") takeaway_bracket();
 else if (part == "takeaway_roller") takeaway_roller();
+else if (part == "takeaway_rollers") takeaway_rollers();
 else if (part == "takeaway_axle") takeaway_axle();
 else if (part == "weight") weight();
 else if (part == "servo_mount") servo_mount();
