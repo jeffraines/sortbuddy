@@ -3,7 +3,7 @@
 //   openscad -D 'part="wheel"' -o wheel.stl sortbuddy_parts.scad
 //   parts: wheel, wheel_big, bracket, throat, flap, hopper, hopper_light,
 //          slide, weight, servo_mount, camera_mount, lower_hood,
-//          led_channel, led_channel_short
+//          led_channel, led_channel_short, splice, joiner, joints (4 H + 2 J)
 //
 // All in mm. Letters match foam-template.pdf (W wheel, Q bracket, T strip, G flap,
 // hopper = P1-P5 in one piece, slide = A + B, weight = S).
@@ -330,6 +330,24 @@ module led_channel(len = 120) {
     }
 }
 
+// ---------------------------------------------------------------- H splice, J joiner
+// Thin flat plates, glued on the OUTSIDE across a joint (hot glue or
+// double-sided tape). Side notches mark the joint line.
+//   H (x4): 50 x 42, across the upper/lower hood seam at the window edge;
+//     the notches go on the window, upper panel C above, lower panel D below.
+//   J (x2): 40 x 25, from a slide wall onto upper-hood panel C.
+module joint_plate(w, h, line_at, horizontal_line) {
+    t = 1.6;
+    difference() {
+        cube([w, h, t]);
+        for (e = [0, 1])
+            if (horizontal_line) translate([e * w, line_at, -1]) rotate([0, 0, 45]) cube([2, 2, t + 2], center = true);
+            else translate([line_at, e * h, -1]) rotate([0, 0, 45]) cube([2, 2, t + 2], center = true);
+    }
+}
+module splice() { joint_plate(50, 42, 21, true); }
+module joiner() { joint_plate(40, 25, 20, false); }
+
 if (part == "wheel") wheel(40);
 else if (part == "wheel_big") wheel(42);
 else if (part == "bracket") bracket();
@@ -344,3 +362,9 @@ else if (part == "camera_mount") camera_mount();
 else if (part == "lower_hood") lower_hood();
 else if (part == "led_channel") led_channel(120);
 else if (part == "led_channel_short") led_channel(60);
+else if (part == "splice") splice();
+else if (part == "joiner") joiner();
+else if (part == "joints") {   // a whole set on one plate: 4 H + 2 J
+    for (i = [0 : 3]) translate([(i % 2) * 55, floor(i / 2) * 47, 0]) splice();
+    for (i = [0 : 1]) translate([110 + 5, i * 30, 0]) joiner();
+}
