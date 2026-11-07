@@ -135,6 +135,19 @@ module flap() {
     }
 }
 
+
+// Finger slots, one in each side wall facing each other, so the stack can be
+// pinched and lifted out. 22 mm wide, centred on the stack (x 53), down to
+// 5 mm above the floor: below that the walls stay whole, so the bottom card's
+// edges never pass a gap while it is fed out.
+module finger_slots(wall, CHW, floor_t, Hh) {
+    for (y = [-wall - 1, CHW - 1]) translate([53, y, 0]) rotate([-90, 0, 0]) mirror([0, 1, 0])
+        linear_extrude(wall + 2) hull() {
+            translate([0, floor_t + 5 + 11]) circle(r = 11);
+            translate([-11, Hh - 1]) square([22, 10]);
+        }
+}
+
 // ---------------------------------------------------------------- P1-P5: hopper in one piece
 // Same layout as the foam hopper (x = along the travel direction): back wall
 // 0-5, stack 5-101, front wall 101-106, lip 106-126. Floor 5 thick so the
@@ -163,8 +176,7 @@ module hopper(wall = 5) {
                 for (z = [floor_t + gap + 19 + 1.75, floor_t + gap + 33 - 1.75])
                     translate([0, 0, z]) rotate([0, 90, 0]) cylinder(d = 3.5, h = wall + 2, $fn = 24);
         for (x = [35, 85]) translate([x, 50.5, -1]) cylinder(d = 2.5, h = 4 + 1, $fn = 24);  // bracket screws
-        for (y = [-wall - 1, CHW - 1])                                     // finger notches to grab the stack
-            translate([53, y, Hh]) rotate([-90, 0, 0]) cylinder(r = 15, h = wall + 2);
+        finger_slots(wall, CHW, floor_t, Hh);                              // pinch the stack out from both sides
         // bracket position mark on the underside: a shallow groove along the slot-side face line
         translate([20, 42 - 0.3, -0.01]) cube([80, 0.6, 0.4]);
     }
@@ -498,6 +510,7 @@ module hopper_frame() {
         // side windows (x along the hopper, z up)
         for (y = [-wall - 1, CHW - 1]) translate([0, y, 0]) rotate([-90, 0, 0]) mirror([0, 1, 0])
             linear_extrude(wall + 2) for (i = [0 : 2]) gable(12 + i * (gw + 3), floor_t + band);
+        finger_slots(wall, CHW, floor_t, Hh);
         // back window
         translate([x0 - 1, 0, 0]) rotate([90, 0, 90]) linear_extrude(wall + 2) for (y = [9, 37]) gable(y, floor_t + band);
     }
