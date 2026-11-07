@@ -599,8 +599,9 @@ module slide_takeaway_lite() {
 //   belt_spacer: 3 mm ring on the shaft first, so the wheel clears the
 //     ear screws (it used to be a hub on the wheel).
 //   belt_wheel(keyed = false): the take-away wheel, free on belt_axle.
-//   belt_frame: holds belt_axle under the slide (glue its top edges to the
-//     underside of the slide floor, axle under the wheel slot).
+//   belt_frame: holds belt_axle under the slide. Glue its two flat tabs to
+//     the underside of the slide floor (the floor is 2 mm: too thin for
+//     screws), axle under the wheel slot.
 // Belt: one rubber band ~190-200 mm round when slack (stretched to ~230 mm
 // on the pulleys), e.g. a large rubber band about 95 mm long folded flat.
 BELT_R = 11;                          // pulley groove radius (both pulleys)
@@ -637,6 +638,9 @@ module belt_frame_installed() {
             for (y = [19, 38]) translate([x0, y, zb]) cube([x1 - x0, t, -zb]);       // cheeks
             translate([x0, 19, -20]) cube([t, 38 + t - 19, 12]);                       // crossbar between the belt strands
             translate([x1 - t, 19, zb]) cube([t, 38 + t - 19, -zb]);                  // far crossbar
+            // glue tabs flat against the slide floor's underside, 8 mm wide
+            translate([x0, 19 - 8, -2]) cube([x1 - x0, 8 + t, 2]);
+            translate([x0, 38, -2]) cube([x1 - x0, t + 8, 2]);
         }
         translate([TA_X, 17, -17]) rotate([-90, 0, 0]) cylinder(d = 5.6, h = 25, $fn = 24);   // axle holes
     }
