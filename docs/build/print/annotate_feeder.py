@@ -35,7 +35,7 @@ d.text((120, 210), "Numbers = assembly order.  Cards go in face up.", font=small
 label("7", "Stack weight", ["on top of the cards", "+ coins/nuts to 30-50 g"], (900, 270), (790, 320))
 label("", "Hopper", ["wheel slot in the floor,", "bracket screws underneath"], (120, 470), (450, 540), "l")
 label("5", "Throat strip", ["outside of the front wall,", "chamfered side against it.", "Gap: 1 card passes, 2 don't", "2x M3 x 10: head inside the hopper,", "washer + nut outside on the strip"], (960, 400), (905, 520))
-label("4", "Motor bracket", ["flange under the hopper floor", "on the faint groove line.", "2x M3 x 6 into the pilot holes", "(no longer: 8+ pokes through the floor)"], (120, 630), (585, 720))
+label("4", "Motor bracket", ["flange under the hopper floor", "on the faint groove line.", "2x M3 x 8 into the pilot holes with", "2 washers under each head (or M3 x 6)"], (120, 630), (585, 720))
 label("2", "28BYJ-48 motor", ["ears on the bracket's flat side,", "body through the big hole.", "2x M3 x 8: head on the ear side,", "washer + nut on the back"], (860, 930), (735, 800))
 label("1 + 3", "Wheel + rubber", ["wheel_spaced.stl: its 3 mm hub keeps it", "clear of the screw heads. Rubber in the", "groove, push all the way onto the shaft.", "Pokes ~1 mm above the hopper floor"], (120, 880), (600, 860))
 label("6", "Slide", ["hopper lip rests 20 mm on its floor,", "between the walls. Prop up the hopper."], (1240, 1000), (1200, 820))

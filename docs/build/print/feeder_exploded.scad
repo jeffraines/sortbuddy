@@ -60,7 +60,11 @@ translate([0, 0, dz]) {
         translate([67 + dx, 45.6 + 22 * E, -22]) rotate([-90, 0, 0]) m3_nut();
     }
     // bracket-to-floor screws, from below through the flange
-    for (x = [35, 85]) translate([x, 50.5, -5 - 18 * E]) m3_screw(6);
+    for (x = [35, 85]) {
+        translate([x, 50.5, -6.2 - 18 * E]) m3_screw(8);
+        translate([x, 50.5, -4.2 - 12 * E]) m3_washer();
+        translate([x, 50.5, -3.6 - 8 * E]) m3_washer();
+    }
     lbl("MOTOR BRACKET", [40, 75, -40]);
     lbl("28BYJ-48", [100, 75, -30]);
 }
@@ -68,12 +72,12 @@ guide([35, 50.5, 0], [35, 50.5, dz]);
 guide([85, 50.5, 0], [85, 50.5, dz]);
 
 // wheel: slides onto the shaft, comes up through the slot
-color([0.3, 0.3, 0.3]) translate([67, 30 - 35 * E, dz - 14]) rotate([-90, 0, 0]) wheel(40);
-color([0.15, 0.15, 0.15]) translate([67, 31.5 - 35 * E, dz - 14]) rotate([-90, 0, 0]) difference() {
+color([0.3, 0.3, 0.3]) translate([67, 28.5 - 35 * E, dz - 14]) rotate([-90, 0, 0]) wheel_spaced(40);
+color([0.15, 0.15, 0.15]) translate([67, 30 - 35 * E, dz - 14]) rotate([-90, 0, 0]) difference() {
     cylinder(d = 38.6, h = 5); translate([0, 0, -1]) cylinder(d = 36, h = 7);            // rubber bands
 }
 lbl("WHEEL + rubber bands", [67, -35 * E - 10, dz - 45]);
-guide([67, 30 - 35 * E + 8, dz - 14], [67, 30, dz - 14]);
+guide([67, 28.5 - 35 * E + 11, dz - 14], [67, 28.5, dz - 14]);
 lbl("wheel pokes ~1 mm above the floor", [67, 35, -12], 3.5);
 
 // slide: the hopper's lip rests 20 mm onto its floor
@@ -112,6 +116,8 @@ if (VIEW == "throat") {
 if (VIEW == "bracket") {
     color([0.95, 0.75, 0.2]) translate([0, 0, 0]) cube([24, 16, 5]);                                         // hopper floor piece
     color([0.85, 0.5, 0.35]) translate([0, 0, -14]) cube([24, 16, 3]);                                       // bracket flange
-    translate([12, 8, -30]) m3_screw(6);
-    color([0.4, 0.4, 0.4]) translate([12, 8, -34]) cylinder(d = 0.6, h = 36);
+    translate([12, 8, -40]) m3_screw(8);
+    translate([12, 8, -27]) m3_washer();
+    translate([12, 8, -22]) m3_washer();
+    color([0.4, 0.4, 0.4]) translate([12, 8, -44]) cylinder(d = 0.6, h = 46);
 }

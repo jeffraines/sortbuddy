@@ -49,9 +49,9 @@ pt = panel(throat, "Throat strip", "2x M3 x 10, one per slot",
            [("screw head", (244, 234), "up"), ("front wall", (334, 230), "down"), ("strip", (432, 240), "up"),
             ("washer", (520, 262), "down"), ("nut", (590, 266), "up")],
            "<- inside the hopper", "outside ->")
-pb = panel(bracket, "Bracket to hopper floor", "2x M3 x 6, from below",
+pb = panel(bracket, "Bracket to hopper floor", "2x M3 x 8 + 2 washers each, from below",
            [("hopper floor (pilot hole)", (610, 80), "right"), ("bracket flange", (610, 240), "right"),
-            ("M3 x 6, no longer", (430, 370), "right")],
+            ("2 washers", (430, 300), "right"), ("M3 x 8", (430, 420), "right")],
            "", "", dx=-150)
 
 canvas = Image.new("RGB", (W, top.height + ph + 20), (248, 248, 248))
