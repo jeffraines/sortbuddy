@@ -3,7 +3,8 @@
 //   openscad -D 'part="wheel"' -o wheel.stl sortbuddy_parts.scad
 //   parts: wheel, wheel_big, bracket, throat, flap, hopper, hopper_light,
 //          slide, weight, servo_mount, camera_mount, lower_hood,
-//          led_channel, led_channel_short, splice, joiner, joints (4 H + 2 J)
+//          led_channel, led_channel_short, splice, joiner, joints (4 H + 2 J),
+//          plate_E, plate_F
 //
 // All in mm. Letters match foam-template.pdf (W wheel, Q bracket, T strip, G flap,
 // hopper = P1-P5 in one piece, slide = A + B, weight = S).
@@ -348,6 +349,43 @@ module joint_plate(w, h, line_at, horizontal_line) {
 module splice() { joint_plate(50, 42, 21, true); }
 module joiner() { joint_plate(40, 25, 20, false); }
 
+// ---------------------------------------------------------------- E top plate, F bottom plate
+// Same outline as the foam (130 x 70, with 25 mm tabs that plug into the
+// notches of panels C / D), 5 mm at the edges and tabs so they sit flush,
+// but only a 2.4 mm skin in the middle. Print the flat face down, no
+// supports; the rim then points into the hood.
+//   E: flat face = OUTSIDE (top). The camera_mount lies flat-face-down in
+//      the shallow recess, lens over the 14 mm hole, connector toward the
+//      slide end.
+//   F: flat face = BOTTOM (on the wedges). The camera_mount stands upside
+//      down (walls down) in the recess on the rim side, lens looking up.
+// Both: the lens ends up where the card stops (x 67, centre of the channel).
+module hood_plate(top) {
+    L = 130; W = 70; T = 5; skin = 2.4; rim = 3;
+    tabs = [[20, 45], [85, 110]];
+    cx = 67; cy = W / 2; cl = 0.3;
+    difference() {
+        union() {
+            difference() {
+                cube([L, W, T]);
+                translate([rim, rim, skin]) cube([L - 2 * rim, W - 2 * rim, T]);
+            }
+            for (t = tabs, y = [-T, W]) translate([t[0], y, 0]) cube([t[1] - t[0], T, T]);
+        }
+        if (top) {
+            translate([cx, cy, -1]) cylinder(d = 14, h = T + 2);
+            // camera_mount plate outline (35.2 x 19.7), 0.6 deep in the flat face
+            translate([cx - 26.6 - cl, cy - 9.85 - cl, -0.01]) cube([35.2 + 2 * cl, 19.7 + 2 * cl, 0.6]);
+        } else {
+            // camera_mount wall outline (29.2 x 13.7), 0.8 deep in the skin, rim side
+            translate([cx - 23.6 - cl, cy - 6.85 - cl, skin - 0.8]) cube([29.2 + 2 * cl, 13.7 + 2 * cl, 2]);
+        }
+        // notches on the end edges marking the camera line (x 67) and the centre (y 35)
+        for (p = [[cx, 0], [cx, W], [0, cy], [L, cy]])
+            translate([p[0], p[1], -1]) rotate([0, 0, 45]) cube([2, 2, T + 2], center = true);
+    }
+}
+
 if (part == "wheel") wheel(40);
 else if (part == "wheel_big") wheel(42);
 else if (part == "bracket") bracket();
@@ -362,6 +400,8 @@ else if (part == "camera_mount") camera_mount();
 else if (part == "lower_hood") lower_hood();
 else if (part == "led_channel") led_channel(120);
 else if (part == "led_channel_short") led_channel(60);
+else if (part == "plate_E") hood_plate(true);
+else if (part == "plate_F") hood_plate(false);
 else if (part == "splice") splice();
 else if (part == "joiner") joiner();
 else if (part == "joints") {   // a whole set on one plate: 4 H + 2 J
