@@ -1,7 +1,7 @@
 // SortBuddy: 3D-printed parts that replace the foam ones where precision matters.
 //
 //   openscad -D 'part="wheel"' -o wheel.stl sortbuddy_parts.scad
-//   parts: wheel, wheel_big, wheel_spaced, bracket, throat, flap, hopper, hopper_light,
+//   parts: wheel, wheel_big, wheel_spaced, wheel_lite, bracket_lite, bracket, throat, flap, hopper, hopper_light,
 //          slide, weight, servo_mount, camera_mount, lower_hood,
 //          led_channel, led_channel_short, splice, joiner, joints (4 H + 2 J),
 //          plate_E, plate_F, panel_D
@@ -427,10 +427,53 @@ module wheel_spaced(d = 40, spacer = 3) {
     }
 }
 
+// ---------------------------------------------------------------- light versions (less filament, faster)
+// Same fit and positions as bracket() and wheel_spaced(); only material that
+// carries no load is gone.
+module bracket_lite() {
+    H = 50; t = 2.4; tf = 3; flange_w = 14;
+    x0 = 9; x1 = 71;                 // the flange screws are at 15 and 65
+    adj = 2; bx = 33; bz = 28;
+    module slot2d(d, len) { hull() for (s = [-1, 1]) translate([0, s * len / 2]) circle(d = d); }
+    difference() {
+        union() {
+            translate([x0, 5, 0]) cube([x1 - x0, H - 5, t]);                       // plate
+            translate([x0, H - tf, 0]) cube([x1 - x0, tf, flange_w]);              // flange
+            for (x = [x0, x1 - 2.4]) translate([x, H - tf, 0])                     // gussets
+                rotate([90, 0, 90]) linear_extrude(2.4) polygon([[0, 0], [-10, 0], [0, 8]]);
+        }
+        translate([0, 0, -1]) linear_extrude(t + 2) {
+            translate([bx, bz]) slot2d(BODY_D + 2 * 0.6, 2 * adj);
+            translate([bx - WIRE_BOX_W / 2 - 0.5, bz - WIRE_BOX_R - adj - 0.5]) square([WIRE_BOX_W + 1, WIRE_BOX_R + adj]);
+            for (dx = [-EAR_PITCH / 2, EAR_PITCH / 2]) translate([bx + dx, bz]) slot2d(EAR_HOLE + 2 * fit, 2 * adj);
+            hull() for (p = [[60, 11], [65, 11], [60, 38], [65, 38]]) translate(p) circle(r = 2);   // window
+        }
+        for (x = [15, 65]) translate([x, H + 1, 8.5]) rotate([90, 0, 0]) cylinder(d = 3.8, h = tf + 2);
+    }
+}
+
+module wheel_lite(d = 40, spacer = 3) {
+    w = 8; recess = 1.4; rim = 2.4; hub_r = 5.5;
+    difference() {
+        wheel(d, w);
+        translate([0, 0, -1]) linear_extrude(w + 2) difference() {
+            circle(r = d / 2 - recess - rim);
+            circle(r = hub_r);
+            for (a = [0 : 72 : 359]) rotate(a) translate([0, -1.2]) square([d, 2.4]);
+        }
+    }
+    translate([0, 0, w]) difference() {
+        cylinder(d = 10, h = spacer);
+        translate([0, 0, -1]) cylinder(d = SHAFT_D + 2 * fit, h = spacer + 2);
+    }
+}
+
 if (part == "wheel") wheel(40);
 else if (part == "wheel_big") wheel(42);
 else if (part == "wheel_spaced") wheel_spaced(40);
 else if (part == "bracket") bracket();
+else if (part == "bracket_lite") bracket_lite();
+else if (part == "wheel_lite") wheel_lite(40);
 else if (part == "throat") throat();
 else if (part == "flap") flap();
 else if (part == "hopper") hopper();

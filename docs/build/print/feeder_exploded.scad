@@ -44,7 +44,7 @@ lbl("gap = 1 card + a bit", [103 + 25 * E, 35, -6], 3.5);
 // bracket + motor + wheel, dropped down
 dz = -55 * E;
 translate([0, 0, dz]) {
-    color([0.85, 0.5, 0.35]) translate([100, 42, -50]) rotate([0, 0, 180]) rotate([90, 0, 0]) bracket();   // the real, rigid placement
+    color([0.85, 0.5, 0.35]) translate([100, 42, -50]) rotate([0, 0, 180]) rotate([90, 0, 0]) bracket_lite();   // the real, rigid placement
     // 28BYJ-48 stand-in
     color([0.75, 0.75, 0.8]) {
         translate([67, 42, -22]) rotate([-90, 0, 0]) cylinder(d = 28, h = 19);          // body behind the plate
@@ -72,7 +72,7 @@ guide([35, 50.5, 0], [35, 50.5, dz]);
 guide([85, 50.5, 0], [85, 50.5, dz]);
 
 // wheel: slides onto the shaft, comes up through the slot
-color([0.3, 0.3, 0.3]) translate([67, 28.5 - 35 * E, dz - 14]) rotate([-90, 0, 0]) wheel_spaced(40);
+color([0.3, 0.3, 0.3]) translate([67, 28.5 - 35 * E, dz - 14]) rotate([-90, 0, 0]) wheel_lite(40);
 color([0.15, 0.15, 0.15]) translate([67, 30 - 35 * E, dz - 14]) rotate([-90, 0, 0]) difference() {
     cylinder(d = 38.6, h = 5); translate([0, 0, -1]) cylinder(d = 36, h = 7);            // rubber bands
 }
