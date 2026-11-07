@@ -61,7 +61,11 @@ module bracket() {
     L = 80; H = 50; t = 3;
     flange_w = 14;
     adj = 2;
-    bx = 47; bz = 28;             // body centre in plate coords (as on the template)
+    // Body centre in plate coords. 33 (not the template's 47): with the flange
+    // under the floor pointing away from the slot, the part is turned so its
+    // x runs backwards along the hopper, and 33 lands the motor under the
+    // middle of the wheel slot (hopper x 67).
+    bx = 33; bz = 28;
     module slot2d(d, len) {       // vertical slot
         hull() for (s = [-1, 1]) translate([0, s * len / 2]) circle(d = d);
     }
@@ -85,7 +89,7 @@ module bracket() {
         // two screw holes in the flange (optional: glue works too)
         for (x = [15, L - 15])
             translate([x, H + 1, t + (flange_w - t) / 2]) rotate([90, 0, 0])
-                cylinder(d = 3.4, h = t + 2);
+                cylinder(d = 3.8, h = t + 2);     // printed sideways: oversized so M3 passes
         // shaft-height mark: a small notch on each side edge, level with the shaft
         for (x = [-0.01, L - 1.2]) translate([x, bz + SHAFT_OFF - 0.4, -1]) cube([1.21, 0.8, t + 2]);
     }

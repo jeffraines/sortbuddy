@@ -44,7 +44,7 @@ lbl("gap = 1 card + a bit", [103 + 25 * E, 35, -6], 3.5);
 // bracket + motor + wheel, dropped down
 dz = -55 * E;
 translate([0, 0, dz]) {
-    color([0.85, 0.5, 0.35]) translate([20, 42, -50]) multmatrix([[1, 0, 0, 0], [0, 0, 1, 0], [0, 1, 0, 0]]) bracket();
+    color([0.85, 0.5, 0.35]) translate([100, 42, -50]) rotate([0, 0, 180]) rotate([90, 0, 0]) bracket();   // the real, rigid placement
     // 28BYJ-48 stand-in
     color([0.75, 0.75, 0.8]) {
         translate([67, 42, -22]) rotate([-90, 0, 0]) cylinder(d = 28, h = 19);          // body behind the plate
