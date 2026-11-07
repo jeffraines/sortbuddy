@@ -458,7 +458,6 @@ module bracket_lite() {
             translate([bx, bz]) slot2d(BODY_D + 2 * 0.6, 2 * adj);
             translate([bx - WIRE_BOX_W / 2 - 0.5, bz - WIRE_BOX_R - adj - 0.5]) square([WIRE_BOX_W + 1, WIRE_BOX_R + adj]);
             for (dx = [-EAR_PITCH / 2, EAR_PITCH / 2]) translate([bx + dx, bz]) slot2d(EAR_HOLE + 2 * fit, 2 * adj);
-            hull() for (p = [[60, 11], [65, 11], [60, 38], [65, 38]]) translate(p) circle(r = 2);   // window
         }
         for (x = [15, 65]) translate([x, H + 1, 8.5]) rotate([90, 0, 0]) cylinder(d = 3.8, h = tf + 2);
     }
