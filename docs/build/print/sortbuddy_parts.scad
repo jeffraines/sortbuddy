@@ -1,7 +1,7 @@
 // SortBuddy: 3D-printed parts that replace the foam ones where precision matters.
 //
 //   openscad -D 'part="wheel"' -o wheel.stl sortbuddy_parts.scad
-//   parts: wheel, wheel_big, wheel_spaced, wheel_lite, bracket_lite, bracket, throat, flap, hopper, hopper_light,
+//   parts: hopper_frame, wheel, wheel_big, wheel_spaced, wheel_lite, bracket_lite, bracket, throat, flap, hopper, hopper_light,
 //          slide, weight, servo_mount, camera_mount, lower_hood,
 //          led_channel, led_channel_short, splice, joiner, joints (4 H + 2 J),
 //          plate_E, plate_F, panel_D
@@ -468,6 +468,41 @@ module wheel_lite(d = 40, spacer = 3) {
     }
 }
 
+// ---------------------------------------------------------------- hopper, frame version (least plastic)
+// Same inside dimensions, floor, slot, lip, pilot holes and front wall as
+// hopper(), but 1.6 mm walls, 45 mm tall (still 100+ cards under the
+// weight), and peaked windows in the side and back walls (45 degree tops,
+// so nothing sags). The bottom 12 mm of
+// the side walls stays solid, where the bottom card's edges slide; the
+// front wall stays solid (it holds the stack and carries strip T).
+module hopper_frame() {
+    wall = 1.6; Hh = 45; band = 12;
+    L = 126; CHW = 70; floor_t = 5; gap = 3; back = 5; front = 101;
+    x0 = back - wall;
+    // windows with a 45-degree peaked top: no flat spans to sag, no supports
+    gw = 24; h1 = 11;
+    module gable(x, y) { translate([x, y]) polygon([[0, 0], [gw, 0], [gw, h1], [gw / 2, h1 + gw / 2], [0, h1]]); }
+    difference() {
+        union() {
+            translate([x0, 0, 0]) cube([L - x0, CHW, floor_t]);
+            for (y = [-wall, CHW]) translate([x0, y, 0]) cube([front + wall - x0, wall, Hh]);
+            translate([x0, 0, 0]) cube([wall, CHW, Hh]);
+            translate([front, 0, floor_t + gap]) cube([wall, CHW, Hh - floor_t - gap]);
+        }
+        translate([49, 28, -1]) cube([36, 14, floor_t + 2]);                                   // wheel slot
+        for (y = [17, 53]) translate([front - 1, y, 0]) hull()                                  // strip T slots
+            for (z = [floor_t + gap + 19 + 1.75, floor_t + gap + 33 - 1.75])
+                translate([0, 0, z]) rotate([0, 90, 0]) cylinder(d = 3.5, h = wall + 2, $fn = 24);
+        for (x = [35, 85]) translate([x, 50.5, -1]) cylinder(d = 2.5, h = 5, $fn = 24);        // bracket pilot holes
+        translate([20, 42 - 0.3, -0.01]) cube([80, 0.6, 0.4]);                                  // bracket line
+        // side windows (x along the hopper, z up)
+        for (y = [-wall - 1, CHW - 1]) translate([0, y, 0]) rotate([-90, 0, 0]) mirror([0, 1, 0])
+            linear_extrude(wall + 2) for (i = [0 : 2]) gable(12 + i * (gw + 3), floor_t + band);
+        // back window
+        translate([x0 - 1, 0, 0]) rotate([90, 0, 90]) linear_extrude(wall + 2) for (y = [9, 37]) gable(y, floor_t + band);
+    }
+}
+
 if (part == "wheel") wheel(40);
 else if (part == "wheel_big") wheel(42);
 else if (part == "wheel_spaced") wheel_spaced(40);
@@ -477,7 +512,8 @@ else if (part == "wheel_lite") wheel_lite(40);
 else if (part == "throat") throat();
 else if (part == "flap") flap();
 else if (part == "hopper") hopper();
-else if (part == "hopper_light") hopper(2.4);   // thin walls: less plastic, same inside
+else if (part == "hopper_light") hopper(2.4);
+else if (part == "hopper_frame") hopper_frame();   // thin walls: less plastic, same inside
 else if (part == "slide") slide();
 else if (part == "weight") weight();
 else if (part == "servo_mount") servo_mount();
