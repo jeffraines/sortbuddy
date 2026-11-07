@@ -4,7 +4,7 @@
 //   parts: wheel, wheel_big, bracket, throat, flap, hopper, hopper_light,
 //          slide, weight, servo_mount, camera_mount, lower_hood,
 //          led_channel, led_channel_short, splice, joiner, joints (4 H + 2 J),
-//          plate_E, plate_F
+//          plate_E, plate_F, panel_D
 //
 // All in mm. Letters match foam-template.pdf (W wheel, Q bracket, T strip, G flap,
 // hopper = P1-P5 in one piece, slide = A + B, weight = S).
@@ -386,6 +386,28 @@ module hood_plate(top) {
     }
 }
 
+// ---------------------------------------------------------------- D lower hood panel
+// Same as the foam D1 / D2: 130 x 140 x 5, notches in the bottom edge for
+// plate F's tabs, straight top edge for the window. 2.4 mm skin with a 5 mm
+// rim round the edges and the notches. Print the flat face down; the flat
+// face goes OUTSIDE (splices H glue there). D1 and D2 are the same part.
+module panel_D() {
+    L = 130; H = 140; T = 5; skin = 2.4; rim = 3;
+    notches = [[20, 45], [85, 110]];
+    difference() {
+        union() {
+            difference() {
+                cube([L, H, T]);
+                translate([rim, rim, skin]) cube([L - 2 * rim, H - 2 * rim, T]);
+            }
+            for (n = notches) translate([n[0] - rim, 0, 0]) cube([n[1] - n[0] + 2 * rim, T + rim, T]);
+        }
+        for (n = notches) translate([n[0], -1, -1]) cube([n[1] - n[0], T + 1, T + 2]);
+        // camera-line notch on the top edge (x 67)
+        translate([67, H, -1]) rotate([0, 0, 45]) cube([2, 2, T + 2], center = true);
+    }
+}
+
 if (part == "wheel") wheel(40);
 else if (part == "wheel_big") wheel(42);
 else if (part == "bracket") bracket();
@@ -402,6 +424,7 @@ else if (part == "led_channel") led_channel(120);
 else if (part == "led_channel_short") led_channel(60);
 else if (part == "plate_E") hood_plate(true);
 else if (part == "plate_F") hood_plate(false);
+else if (part == "panel_D") panel_D();
 else if (part == "splice") splice();
 else if (part == "joiner") joiner();
 else if (part == "joints") {   // a whole set on one plate: 4 H + 2 J
