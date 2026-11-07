@@ -277,7 +277,8 @@ class Angles:
     tray_yes: float = 65    # rolled ~25 deg one way
     tray_no: float = 115    # ...and the other
     settle: float = 0.35    # seconds for a card to slide off
-    feed_steps: int = 2600  # half-steps per card (wheel: ~0.6 turn moves a card ~80 mm)
+    feed_steps: int = 4500  # half-steps per card: ~1.1 turns of the 40 mm wheels moves a card ~140 mm,
+                            # through the throat and past the take-away rollers on the slide
     feed_return: bool = False  # True for a pusher that must come back after each card
     step_ms: float = 1.5    # stepper speed, ms per half-step
 

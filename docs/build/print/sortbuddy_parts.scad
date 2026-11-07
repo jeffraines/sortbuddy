@@ -1,7 +1,7 @@
 // SortBuddy: 3D-printed parts that replace the foam ones where precision matters.
 //
 //   openscad -D 'part="wheel"' -o wheel.stl sortbuddy_parts.scad
-//   parts: hopper_frame, wheel, wheel_big, wheel_spaced, wheel_lite, bracket_lite, bracket, throat, flap, hopper, hopper_light,
+//   parts: slide_takeaway, takeaway_bracket, takeaway_roller, takeaway_axle, hopper_frame, wheel, wheel_big, wheel_spaced, wheel_lite, bracket_lite, bracket, throat, flap, hopper, hopper_light,
 //          slide, weight, servo_mount, camera_mount, lower_hood,
 //          led_channel, led_channel_short, splice, joiner, joints (4 H + 2 J),
 //          plate_E, plate_F, panel_D
@@ -442,14 +442,14 @@ module wheel_spaced(d = 40, spacer = 3) {
 // ---------------------------------------------------------------- light versions (less filament, faster)
 // Same fit and positions as bracket() and wheel_spaced(); only material that
 // carries no load is gone.
-module bracket_lite() {
+module bracket_lite(bz = 28, y0 = 5) {   // bz 25, y0 2: the take-away motor under the slide
     H = 50; t = 2.4; tf = 3; flange_w = 14;
     x0 = 9; x1 = 71;                 // the flange screws are at 15 and 65
-    adj = 2; bx = 33; bz = 28;
+    adj = 2; bx = 33;
     module slot2d(d, len) { hull() for (s = [-1, 1]) translate([0, s * len / 2]) circle(d = d); }
     difference() {
         union() {
-            translate([x0, 5, 0]) cube([x1 - x0, H - 5, t]);                       // plate
+            translate([x0, y0, 0]) cube([x1 - x0, H - y0, t]);                     // plate
             translate([x0, H - tf, 0]) cube([x1 - x0, tf, flange_w]);              // flange
             for (x = [x0, x1 - 2.4]) translate([x, H - tf, 0])                     // gussets
                 rotate([90, 0, 90]) linear_extrude(2.4) polygon([[0, 0], [-10, 0], [0, 8]]);
@@ -515,6 +515,49 @@ module hopper_frame() {
     }
 }
 
+// ---------------------------------------------------------------- take-away rollers on the slide
+// The feed wheel only pushes a card until its back edge passes the wheel,
+// with the tail still under the stack. A second wheel + motor under the
+// slide, 40 mm past the hopper end, with a free roller pressing the card
+// onto it, grabs the card's front edge and pulls it all the way out.
+//   slide_takeaway: slide() + wheel slot in the floor, axle slots in both
+//     walls, band lugs under them, and a guide line for the bracket.
+//   takeaway_bracket: bracket_lite with the motor 3 mm lower, because the
+//     slide floor is 2 mm (the hopper floor is 5). Glue its flange under
+//     the slide floor, flat face on the guide line, flange away from the slot.
+//   takeaway_roller + takeaway_axle: the roller rides on the axle, the axle
+//     floats in the wall slots; a rubber band on each axle end, looped under
+//     the lug below it, pulls the roller down onto the card.
+// The second motor goes on a second ULN2003 whose IN1-IN4 are wired to the
+// same 4 GPIO pins as the first, so both wheels turn in step.
+TA_X = 40;          // take-away wheel / roller, from the slide's hopper end
+module slide_takeaway() {
+    CHW = 70; wall = 5;
+    difference() {
+        union() {
+            slide();
+            for (y = [-wall - 5, CHW + wall]) translate([TA_X - 5, y, 0]) cube([10, 5, 5]);   // band lugs
+        }
+        translate([TA_X - 12, 27, -1]) cube([24, 15, 5]);                                       // wheel slot
+        for (y = [-wall - 1, CHW - 1]) translate([TA_X, y, 0]) rotate([-90, 0, 0])              // axle slots
+            linear_extrude(wall + 2) hull() for (z = [6, 18]) translate([0, -z]) circle(d = 4.8, $fn = 24);
+        for (y = [-wall - 5 - 1, CHW + wall + 4])                                               // band grooves
+            translate([TA_X - 1, y, -1]) cube([2, 2, 7]);
+        translate([2, 42 - 0.3, -0.01]) cube([62, 0.6, 0.4]);                                    // bracket line
+    }
+}
+module takeaway_bracket() { bracket_lite(25, 2); }
+module takeaway_roller() {                       // prints standing
+    difference() { cylinder(d = 16, h = 64); translate([0, 0, -1]) cylinder(d = 5, h = 66); }
+}
+module takeaway_axle() {                         // prints lying flat; octagon, a flat face down
+    len = 92;
+    difference() {
+        translate([0, 0, 4 / 2 * cos(22.5)]) rotate([0, 90, 0]) rotate([0, 0, 22.5]) cylinder(d = 4, h = len, $fn = 8);
+        for (x = [3, len - 4.5]) translate([x, -3, 2.8]) cube([1.5, 6, 3]);                     // band grooves
+    }
+}
+
 if (part == "wheel") wheel(40);
 else if (part == "wheel_big") wheel(42);
 else if (part == "wheel_spaced") wheel_spaced(40);
@@ -527,6 +570,10 @@ else if (part == "hopper") hopper();
 else if (part == "hopper_light") hopper(2.4);
 else if (part == "hopper_frame") hopper_frame();   // thin walls: less plastic, same inside
 else if (part == "slide") slide();
+else if (part == "slide_takeaway") slide_takeaway();
+else if (part == "takeaway_bracket") takeaway_bracket();
+else if (part == "takeaway_roller") takeaway_roller();
+else if (part == "takeaway_axle") takeaway_axle();
 else if (part == "weight") weight();
 else if (part == "servo_mount") servo_mount();
 else if (part == "camera_mount") camera_mount();
