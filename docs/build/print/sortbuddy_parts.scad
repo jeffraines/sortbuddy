@@ -1,7 +1,7 @@
 // SortBuddy: 3D-printed parts that replace the foam ones where precision matters.
 //
 //   openscad -D 'part="wheel"' -o wheel.stl sortbuddy_parts.scad
-//   parts: slide_takeaway, takeaway_bracket, takeaway_roller, takeaway_axle, hopper_frame, wheel, wheel_big, wheel_spaced, wheel_lite, bracket_lite, bracket, throat, flap, hopper, hopper_light,
+//   parts: slide_takeaway_lite, slide_takeaway, takeaway_bracket, takeaway_roller, takeaway_axle, hopper_frame, wheel, wheel_big, wheel_spaced, wheel_lite, bracket_lite, bracket, throat, flap, hopper, hopper_light,
 //          slide, weight, servo_mount, camera_mount, lower_hood,
 //          led_channel, led_channel_short, splice, joiner, joints (4 H + 2 J),
 //          plate_E, plate_F, panel_D
@@ -558,6 +558,34 @@ module takeaway_axle() {                         // prints lying flat; octagon, 
     }
 }
 
+// ---------------------------------------------------------------- light take-away slide (about half the plastic)
+// Same floor, slot, axle slots, band lugs and bracket line as slide_takeaway,
+// but 2.4 mm walls, 12 mm tall along most of the slide. They rise (45-degree
+// ramps, nothing to sag) to 24 mm round the take-away axle and to 30 mm at
+// the hood end, where pads bring the outside face out to 5 mm so joiners J
+// still sit flush with hood panels C.
+module slide_takeaway_lite() {
+    L = 175; CHW = 70; w = 2.4; floor_t = 2; wall_end = 160; bevel = 10;
+    prof = [[0, 0], [wall_end, 0], [wall_end, 30], [132, 30], [114, 12], [64, 12],
+            [52, 24], [28, 24], [16, 12], [0, 12]];
+    module wall_at(y) translate([0, y + w, 0]) rotate([90, 0, 0]) linear_extrude(w) polygon(prof);
+    difference() {
+        union() {
+            cube([L, CHW, floor_t]);
+            wall_at(-w); wall_at(CHW);
+            for (y = [-5, CHW + w]) translate([wall_end - 22, y, 0]) cube([22, 5 - w, 30]);         // joiner pads
+            for (y = [-w - 5, CHW + w]) translate([TA_X - 5, y, 0]) cube([10, 5, 5]);               // band lugs
+        }
+        translate([L - bevel, -1, floor_t]) rotate([0, atan((floor_t - 0.6) / bevel), 0])
+            cube([bevel + 5, CHW + 2, 5]);
+        translate([TA_X - 12, 27, -1]) cube([24, 15, 5]);                                            // wheel slot
+        for (y = [-w - 1, CHW - 1]) translate([TA_X, y, 0]) rotate([-90, 0, 0])                    // axle slots
+            linear_extrude(w + 2) hull() for (z = [6, 18]) translate([0, -z]) circle(d = 4.8, $fn = 24);
+        for (y = [-w - 5 - 1, CHW + w + 4]) translate([TA_X - 1, y, -1]) cube([2, 2, 7]);           // band grooves
+        translate([2, 42 - 0.3, -0.01]) cube([62, 0.6, 0.4]);                                         // bracket line
+    }
+}
+
 if (part == "wheel") wheel(40);
 else if (part == "wheel_big") wheel(42);
 else if (part == "wheel_spaced") wheel_spaced(40);
@@ -571,6 +599,7 @@ else if (part == "hopper_light") hopper(2.4);
 else if (part == "hopper_frame") hopper_frame();   // thin walls: less plastic, same inside
 else if (part == "slide") slide();
 else if (part == "slide_takeaway") slide_takeaway();
+else if (part == "slide_takeaway_lite") slide_takeaway_lite();
 else if (part == "takeaway_bracket") takeaway_bracket();
 else if (part == "takeaway_roller") takeaway_roller();
 else if (part == "takeaway_axle") takeaway_axle();
