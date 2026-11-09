@@ -636,7 +636,8 @@ module belt_frame_installed() {
     difference() {
         union() {
             for (y = [19, 38]) translate([x0, y, zb]) cube([x1 - x0, t, -zb]);       // cheeks
-            translate([x0, 19, -20]) cube([t, 38 + t - 19, 12]);                       // crossbar between the belt strands
+            // (no crossbar at the hopper end: it would sit inside the belt loop,
+            // and a closed band could not be put on)
             translate([x1 - t, 19, zb]) cube([t, 38 + t - 19, -zb]);                  // far crossbar
             // glue tabs flat against the slide floor's underside, 8 mm wide
             translate([x0, 19 - 8, -2]) cube([x1 - x0, 8 + t, 2]);
